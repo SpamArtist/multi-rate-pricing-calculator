@@ -18,3 +18,9 @@
 - Keep commit description details focused only on files included in that commit.
 - If any detail is uncertain, state assumptions explicitly in the commit description.
 - Do not ask for permission for `git add` or `git commit` to create a commit.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues is the canonical issue tracker and Wayfinder map. See `docs/agents/issue-tracker.md`.
