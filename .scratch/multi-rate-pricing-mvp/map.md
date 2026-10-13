@@ -14,7 +14,7 @@ An implementation-ready MVP specification and a reviewed, runnable UI prototype 
 
 ## Decisions so far
 
-<!-- Closed ticket index. Answers live in ticket files. -->
+- [RLS and session architecture](issues/04-rls-and-session-architecture.md) — Research recommends transaction-local identity, separate DB roles, and opaque sessions; the auth decision remains open.
 
 ## Not yet specified
 
