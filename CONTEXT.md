@@ -53,4 +53,4 @@ Creating a new draft from an existing document, whether that document is a draft
 The calendar date assigned to a document for listing and reporting.
 
 **Summary report**:
-An aggregate view of documents whose issue dates fall in a selected range.
+An aggregate view of finalized documents whose issue dates fall in its selected range, independent of dashboard list filters.
