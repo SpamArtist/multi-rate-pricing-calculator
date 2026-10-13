@@ -8,6 +8,10 @@ The language for creating, finalizing, and summarizing priced customer documents
 A generic priced record prepared for a customer. It can serve a quoting or invoicing workflow without choosing a formal quote or invoice type.
 _Avoid_: Quote, invoice (as document types)
 
+**Document owner**:
+The individual registered user to whom a document belongs. Each document has exactly one owner.
+_Avoid_: Business account, team
+
 **Customer**:
 The person or organization named on a document.
 _Avoid_: Client, account
