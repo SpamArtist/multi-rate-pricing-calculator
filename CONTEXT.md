@@ -5,7 +5,7 @@ The language for creating, finalizing, and summarizing priced customer documents
 ## Language
 
 **Document**:
-A generic priced record issued to a customer. It can serve a quoting or invoicing workflow without choosing a formal quote or invoice type.
+A generic priced record prepared for a customer. It can serve a quoting or invoicing workflow without choosing a formal quote or invoice type.
 _Avoid_: Quote, invoice (as document types)
 
 **Customer**:
@@ -33,11 +33,17 @@ The tax amount calculated from a taxable line amount and that line's tax percent
 The taxable line amount plus its line tax.
 
 **Draft**:
-A document that its owner can still change.
+A document that its owner can still change, even while incomplete.
 
 **Finalized document**:
-A document whose metadata, line items, and amounts are fixed.
+A document whose customer details, metadata, line items, and amounts are fixed as a snapshot.
 _Avoid_: Published document
+
+**Finalization**:
+The irreversible transition of a valid draft into a finalized document.
+
+**Duplication**:
+Creating a new draft from an existing document, whether that document is a draft or finalized.
 
 **Issue date**:
 The calendar date assigned to a document for listing and reporting.
