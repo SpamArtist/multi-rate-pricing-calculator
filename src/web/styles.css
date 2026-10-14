@@ -142,6 +142,26 @@ button {
   outline-offset: 0.2em;
 }
 
+.auth-switch {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.auth-switch:focus-visible {
+  outline: max(2px, 0.08em) solid var(--accent);
+  outline-offset: 0.2em;
+}
+
+.auth-switch:active {
+  transform: scale(0.97);
+}
+
 .field-hint,
 .privacy-note {
   color: var(--muted);
@@ -178,10 +198,18 @@ button {
   .primary-button:hover:not(:disabled) {
     background: color-mix(in oklch, var(--accent), black 12%);
   }
+
+  .auth-switch:hover {
+    color: color-mix(in oklch, var(--accent), black 12%);
+  }
 }
 
 @media (prefers-reduced-motion: no-preference) {
   .primary-button {
     transition: transform 160ms ease-out, background-color 160ms ease-out;
+  }
+
+  .auth-switch {
+    transition: transform 160ms ease-out, color 160ms ease-out;
   }
 }

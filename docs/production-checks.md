@@ -1,6 +1,6 @@
 # Production check scaffold
 
-This repository keeps the approved in-memory design prototype separate from the production seams. Production checks use a TypeScript API, React app, Drizzle migrations, and real PostgreSQL. They establish health, role separation, tenant isolation, and browser smoke checks; document lifecycle and auth behavior arrive in later slices.
+This repository keeps the approved in-memory design prototype separate from the production seams. Production checks use a TypeScript API, React app, Drizzle migrations, and real PostgreSQL. They establish health, role separation, tenant isolation, authentication, and browser flows; document lifecycle arrives in a later slice.
 
 ## One-command local setup
 
@@ -46,12 +46,17 @@ Real-Postgres DB checks create fresh UUID owners with the migration role and run
 
 Playwright launches API and React together through `npm run dev`, uses semantic roles and visible status text, and creates separate browser contexts for user sessions. It does not use the prototype as its result source.
 
+## Authentication session behavior
+
+Sign-in trims and validates credentials with the same Unicode rules as sign-up, uses case-insensitive canonical email lookup, and returns one generic credential failure for unknown email or wrong password. Every successful sign-in creates a separate opaque session. The API enforces 24-hour idle and seven-day absolute expiry; session checks refresh idle activity without moving the absolute bound. Every cookie-bearing state-changing request checks same-origin proof. Sign-in attempts are throttled by canonical email and client IP.
+
+The current browser build has a private-workspace welcome screen but no document editor. Expiry returns the browser to sign-in on the next session check or reload. Editor draft preservation cannot be exercised until editor inputs exist; credential values are not persisted for recovery.
+
 ## Latest local verification
 
-Verified 2026-10-14 after applying migrations and running production check commands against local PostgreSQL:
+Verified 2026-10-14 against local PostgreSQL:
 
-- `npm run db:migrate` on a fresh temporary PostgreSQL database — exit 0; migrations applied as `pricing_migrator`.
-- `npm run check` — exit 0: typecheck and lint passed; API 2 files / 3 tests passed; DB 1 file / 7 tests passed as `pricing_runtime`; UI 1 Playwright test passed.
-- `npm run check:db` on the fresh temporary database — 1 file / 7 tests passed.
+- `npm run db:migrate` — exit 0; session clock grant migration applied as `pricing_migrator`.
+- `npm run check` — exit 0: typecheck and lint passed; API 4 files / 13 tests passed; DB 1 file / 7 tests passed as `pricing_runtime`; UI 2 files / 4 Playwright tests passed.
 - `npm run build` — exit 0; Vite built React and esbuild produced API bundle.
 - `git diff --check` — exit 0.
