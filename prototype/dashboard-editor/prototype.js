@@ -29,7 +29,9 @@ const state = {
   sort: 'desc',
   reportStart: '2026-10-01',
   reportEnd: '2026-10-31',
+  summaryOpen: false,
   notice: '',
+  noticeTargetId: null,
   nextId: 1049,
   nextLineId: 8
 };
@@ -39,6 +41,13 @@ const variants = {
   B: 'Ledger',
   C: 'Document view'
 };
+const linkedId = location.hash.startsWith('#document=') ? decodeURIComponent(location.hash.slice('#document='.length)) : null;
+if (linkedId && state.docs.some(item => item.id === linkedId)) {
+  state.currentId = linkedId;
+  state.view = 'editor';
+} else if (linkedId) {
+  history.replaceState(null, '', `${location.pathname}${location.search}`);
+}
 const app = document.querySelector('#app');
 const euros = cents => new Intl.NumberFormat('en-IE', { style: 'currency', currency: 'EUR' }).format(cents / 100);
 const dateLabel = date => date ? new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${date}T12:00:00Z`)) : 'No issue date';
@@ -90,7 +99,7 @@ const badge = status => `<span class="badge ${status}"><span class="badge-dot"><
 const title = () => `<div class="brand-mark" aria-hidden="true">P<span>.</span></div><strong class="brand-name">Priced</strong>`;
 const navButton = (view, label, glyph) => `<button type="button" data-action="view" data-view="${view}" class="nav-link ${state.view === view ? 'active' : ''}">${icon(glyph)}<span>${label}</span></button>`;
 const newButton = () => `<button type="button" class="button primary" data-action="new">${icon('plus')}<span>New document</span></button>`;
-const notice = () => state.notice ? `<p class="notice" role="status">${safe(state.notice)}</p>` : '';
+const notice = () => state.notice ? `<p class="notice" role="status">${safe(state.notice)}${state.noticeTargetId ? ` <a href="#document=${safe(state.noticeTargetId)}" data-action="open" data-id="${safe(state.noticeTargetId)}">Open ${safe(state.noticeTargetId)}</a>` : ''}</p>` : '';
 
 function filters(compact = false) {
   return `<form class="filters ${compact ? 'compact' : ''}" id="filters" autocomplete="off">
@@ -165,8 +174,7 @@ function renderA() {
 }
 
 function dashboardB() {
-  const invalidReport = state.reportEnd < state.reportStart;
-  return `<main class="b-dashboard"><div class="b-title"><div><span class="section-label">Pricing documents</span><h1>Documents</h1><p>Find and continue your customer work.</p></div>${newButton()}</div><div class="b-report-band"><div class="report-band-main"><span>Finalized value · selected issue dates</span><strong>${invalidReport ? '—' : euros(reportTotals().total)}</strong><small>${invalidReport ? 'Choose a valid date range' : `${reportDocs().length} finalized documents`}</small></div>${report()}</div><div class="b-list-heading"><h2>All documents</h2><span>${filteredDocs().length} shown</span></div>${filters()}${documentRows('table')}<p class="pagination-note">Page 1 · 25 documents per page in production</p></main>`;
+  return `<div class="b-dashboard-shell ${state.summaryOpen ? 'summary-open' : ''}"><main class="b-dashboard"><div class="b-title"><div><span class="section-label">Pricing documents</span><h1>Documents</h1><p>Find and continue your customer work.</p></div><div class="b-title-actions"><button type="button" class="button secondary" data-action="toggle-summary" aria-controls="b-summary-sidebar" aria-expanded="${state.summaryOpen}">${icon('chart')}<span>Generate Summary</span></button>${newButton()}</div></div><div class="b-list-heading"><h2>All documents</h2><span>${filteredDocs().length} shown</span></div>${filters()}${documentRows('table')}<p class="pagination-note">Page 1 · 25 documents per page in production</p></main><aside class="b-summary-sidebar" id="b-summary-sidebar" aria-label="Summary report" ${state.summaryOpen ? '' : 'hidden'}><div class="b-summary-sidebar-head"><span>Generated summary</span><button type="button" class="icon-action" data-action="toggle-summary" aria-label="Close summary">×</button></div>${report()}</aside></div>`;
 }
 function editorB() {
   return `<main class="b-editor"><button type="button" class="back-link" data-action="view" data-view="dashboard">${icon('back')} All documents</button>${editorHeading()}<div class="b-editor-content">${metadata()}${lineItems('ledger')}${amountBreakdown('band')}</div></main>`;
@@ -208,16 +216,28 @@ document.addEventListener('keydown', event => {
 });
 
 app.addEventListener('click', event => {
-  const button = event.target.closest('button[data-action]');
-  if (!button) return;
-  const action = button.dataset.action;
+  const control = event.target.closest('[data-action]');
+  if (!control) return;
+  if (control.tagName === 'A') event.preventDefault();
+  const action = control.dataset.action;
   state.notice = '';
-  if (action === 'view') state.view = button.dataset.view;
-  if (action === 'open') { state.currentId = button.dataset.id; state.view = 'editor'; }
+  state.noticeTargetId = null;
+  if (action === 'view') {
+    state.view = control.dataset.view;
+    if (location.hash) history.replaceState(null, '', `${location.pathname}${location.search}`);
+  }
+  if (action === 'open') {
+    state.currentId = control.dataset.id;
+    state.view = 'editor';
+    if (control.tagName === 'A') history.pushState(null, '', control.getAttribute('href'));
+    else if (location.hash) history.replaceState(null, '', `${location.pathname}${location.search}`);
+  }
+  if (action === 'toggle-summary') state.summaryOpen = !state.summaryOpen;
   if (action === 'new') {
     const id = `PD-${state.nextId++}`;
     state.docs.unshift({ id, customer: '', date: localToday(), status: 'draft', lines: [] });
     state.currentId = id; state.view = 'editor';
+    if (location.hash) history.replaceState(null, '', `${location.pathname}${location.search}`);
   }
   if (action === 'duplicate') {
     const source = doc();
@@ -226,11 +246,12 @@ app.addEventListener('click', event => {
     copy.status = 'draft';
     copy.date = localToday();
     copy.lines.forEach(line => { line.id = state.nextLineId++; });
-    state.docs.unshift(copy); state.currentId = copy.id;
+    state.docs.unshift(copy);
     state.notice = `Created editable draft ${copy.id} from ${source.id}.`;
+    state.noticeTargetId = copy.id;
   }
   if (action === 'add-line') doc().lines.push({ id: state.nextLineId++, name: '', quantity: 1, price: 0, discount: 0, tax: 0 });
-  if (action === 'remove-line') doc().lines = doc().lines.filter(line => String(line.id) !== button.dataset.id);
+  if (action === 'remove-line') doc().lines = doc().lines.filter(line => String(line.id) !== control.dataset.id);
   if (action === 'finalize') {
     const current = doc();
     if (!current.customer.trim() || !current.date || !current.lines.length || current.lines.some(line => !line.name.trim())) state.notice = 'Add a customer, issue date, and named line item before finalizing.';
