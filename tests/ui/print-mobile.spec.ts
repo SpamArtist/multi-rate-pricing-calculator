@@ -111,6 +111,7 @@ test('prints incomplete draft and frozen finalized detail without a print endpoi
     await expect(page.getByLabel('Document name')).toHaveValue('Brand workshop');
     await expect(page.getByLabel('Customer name')).toHaveValue('Alpen Studio');
     await expect(page.getByLabel('Issue date')).toHaveValue('2026-10-14');
+    await expect(page.getByLabel('Issue date')).toHaveCSS('appearance', 'none');
     await expect(page.locator('.status-badge')).toHaveText('Draft');
     await expect(page.locator('.status-badge')).toHaveCSS('text-transform', 'uppercase');
     await expect(page.getByTestId('line-item')).toHaveCount(2);
@@ -166,6 +167,7 @@ test('prints incomplete draft and frozen finalized detail without a print endpoi
     await expect(page.getByLabel('Document name')).toHaveValue('Brand workshop');
     await expect(page.getByLabel('Customer name')).toHaveValue('Alpen Studio');
     await expect(page.getByLabel('Issue date')).toHaveValue('2026-10-14');
+    await expect(page.getByLabel('Issue date')).toHaveCSS('appearance', 'none');
     await expect(page.locator('.line-math').nth(0)).toHaveText('€59.97 subtotal − €10.00 discount = €49.97 taxable + €9.49 tax');
     await expect(page.locator('.line-math').nth(1)).toHaveText('€5.00 subtotal − €0.00 discount = €5.00 taxable + €0.38 tax');
     await expect(page.locator('.amount-list')).toContainText('€64.97');

@@ -1362,6 +1362,14 @@ button:active:not(:disabled) {
     color: transparent !important;
   }
 
+  input[type="date"] {
+    appearance: none;
+  }
+
+  input[type="date"]::-webkit-calendar-picker-indicator {
+    display: none !important;
+  }
+
   .field label,
   .section-label,
   .line-index,

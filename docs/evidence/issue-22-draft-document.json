@@ -1,15 +1,15 @@
 {
-  "id": "7c1efa8e-c6fd-437b-af0b-f182f324bed7",
+  "id": "915b1a08-4518-4551-b5ad-cc28b357bb9a",
   "title": "Brand workshop",
   "customerName": "Alpen Studio",
   "issueDate": "2026-10-14",
   "status": "draft",
-  "createdAt": "2026-10-14T14:44:14.834Z",
-  "updatedAt": "2026-10-14T14:44:14.954Z",
+  "createdAt": "2026-10-14T14:52:01.240Z",
+  "updatedAt": "2026-10-14T14:52:01.345Z",
   "finalizedAt": null,
   "lineItems": [
     {
-      "id": "88c8bfb4-c361-481b-b6d9-098763539f73",
+      "id": "239b9f62-0250-41dc-aab3-575f220cb405",
       "position": 1,
       "description": "",
       "quantity": 3,
@@ -25,7 +25,7 @@
       }
     },
     {
-      "id": "58372cf6-0cf0-489a-8c9b-b888074bcd8c",
+      "id": "8c642bb7-d2fa-4a2f-9543-f734edb9bd0f",
       "position": 2,
       "description": "Print-ready files",
       "quantity": 2,

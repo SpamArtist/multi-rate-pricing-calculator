@@ -6,7 +6,7 @@ Verified Variant B · Ledger detail in Chrome at 430px and under emulated print 
 
 ## Print evidence
 
-Playwright saved and reopened an incomplete draft with a blank first-line description. It stubbed `window.print()` to assert the Print control call, emulated print media, then checked the rendered DOM and screenshots. The click stayed on the same detail route and issued no network request. The print DOM retained title, customer, issue date, ordered lines, arithmetic, and five document totals. Status printed as `DRAFT`; app navigation, buttons, and line actions were hidden. Finalization then produced `FINALIZED`; reloaded API data matched the stored snapshot exactly, and print retained the same details and amounts.
+Playwright saved and reopened an incomplete draft with a blank first-line description. It stubbed `window.print()` to assert the Print control call, emulated print media, then checked the rendered DOM and screenshots. The click stayed on the same detail route and issued no network request. The print DOM retained title, customer, issue date, ordered lines, arithmetic, and five document totals. Status printed as `DRAFT`; app navigation, buttons, line actions, and native date picker indicator were hidden. Finalization then produced `FINALIZED`; reloaded API data matched the stored snapshot exactly, and print retained the same details and amounts.
 
 API amount values matched calculation contract: subtotal 6497 cents, discount 1000, taxable 5497, tax 987, total 6484. Ordered line totals were 5946 and 538 cents.
 
