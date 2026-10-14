@@ -1,13 +1,14 @@
 import express, { type Express } from 'express';
 import { resolve } from 'node:path';
 import { checkDatabase } from '../db/client.js';
-import { createAuthRouter, type SignupRateLimitOptions } from './auth.js';
+import { createAuthRouter, requireSameOriginForCookieMutations, type SigninRateLimitOptions, type SignupRateLimitOptions } from './auth.js';
 import { systemClock, type Clock } from './clock.js';
 
 export type DatabaseCheck = () => Promise<void>;
 
 export interface AppOptions {
   signupRateLimit?: SignupRateLimitOptions;
+  signinRateLimit?: SigninRateLimitOptions;
 }
 
 export function createApp(
@@ -17,7 +18,8 @@ export function createApp(
 ): Express {
   const app = express();
 
-  app.use('/auth', createAuthRouter(clock, options.signupRateLimit));
+  app.use(requireSameOriginForCookieMutations);
+  app.use('/auth', createAuthRouter(clock, options.signupRateLimit, options.signinRateLimit));
 
   app.get('/health', async (_request, response) => {
     try {

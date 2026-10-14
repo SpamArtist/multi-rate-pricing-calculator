@@ -1,10 +1,10 @@
 import { createHash, randomBytes } from 'node:crypto';
 import argon2 from 'argon2';
-import { and, eq, sql } from 'drizzle-orm';
-import { json, Router, type RequestHandler } from 'express';
+import { eq, sql } from 'drizzle-orm';
+import { json, Router, type Request, type RequestHandler } from 'express';
 import { db } from '../db/client.js';
 import { sessions, users } from '../db/schema.js';
-import { validateRegistrationFields } from '../shared/auth-validation.js';
+import { trimUnicodeWhitespace, validateRegistrationFields } from '../shared/auth-validation.js';
 import { type Clock } from './clock.js';
 
 const SESSION_COOKIE = '__Host-session';
@@ -24,6 +24,8 @@ export interface SignupRateLimitOptions {
   maxRequests?: number;
   windowMs?: number;
 }
+
+export type SigninRateLimitOptions = SignupRateLimitOptions;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -62,7 +64,15 @@ function sendRateLimited(response: Parameters<RequestHandler>[1]): void {
   response.status(429).json(errorResponse('rate_limited', 'Too many requests. Try again later.'));
 }
 
-function createSignupRateLimiter(clock: Clock, options: SignupRateLimitOptions = {}): RequestHandler {
+function requestIp(request: Request): string {
+  return request.ip || request.socket.remoteAddress || 'unknown';
+}
+
+function createRateLimiter(
+  clock: Clock,
+  keyForRequest: (request: Request) => string[],
+  options: SignupRateLimitOptions = {},
+): RequestHandler {
   const maxRequests = Math.max(1, options.maxRequests ?? 5);
   const windowMs = Math.max(1, options.windowMs ?? 15 * 60 * 1000);
   const maxBuckets = 10_000;
@@ -74,21 +84,35 @@ function createSignupRateLimiter(clock: Clock, options: SignupRateLimitOptions =
       if (now - bucket.startedAt >= windowMs) buckets.delete(key);
     }
 
-    const key = request.ip || request.socket.remoteAddress || 'unknown';
-    const bucket = buckets.get(key);
-    if (!bucket) {
-      if (buckets.size >= maxBuckets) buckets.delete(buckets.keys().next().value!);
-      buckets.set(key, { startedAt: now, count: 1 });
-      next();
-      return;
-    }
-    if (bucket.count >= maxRequests) {
+    const keys = [...new Set(keyForRequest(request))];
+    if (keys.some(key => (buckets.get(key)?.count ?? 0) >= maxRequests)) {
       sendRateLimited(response);
       return;
     }
-    bucket.count += 1;
+    for (const key of keys) {
+      const bucket = buckets.get(key);
+      if (!bucket) {
+        if (buckets.size >= maxBuckets) buckets.delete(buckets.keys().next().value!);
+        buckets.set(key, { startedAt: now, count: 1 });
+      } else {
+        bucket.count += 1;
+      }
+    }
     next();
   };
+}
+
+function createSignupRateLimiter(clock: Clock, options: SignupRateLimitOptions = {}): RequestHandler {
+  return createRateLimiter(clock, request => [`ip:${requestIp(request)}`], options);
+}
+
+function createSigninRateLimiter(clock: Clock, options: SigninRateLimitOptions = {}): RequestHandler {
+  return createRateLimiter(clock, request => {
+    const email = isRecord(request.body) && typeof request.body.email === 'string'
+      ? trimUnicodeWhitespace(request.body.email).toLowerCase()
+      : '';
+    return [`ip:${requestIp(request)}`, `email:${email}`];
+  }, options);
 }
 
 function sessionCookie(token: string): string {
@@ -124,9 +148,45 @@ function unauthenticated(response: Parameters<RequestHandler>[1]): void {
   response.status(401).json(errorResponse('unauthenticated', 'Sign in to continue.'));
 }
 
+const dummyPasswordHash = argon2.hash('pricing-calculator-dummy-password', ARGON2ID_OPTIONS);
+
+function sameOrigin(request: Request): boolean {
+  const source = request.get('origin') || request.get('referer');
+  const host = request.get('host');
+  if (!source || !host) return false;
+  try {
+    return new URL(source).origin === `${request.protocol}://${host}`;
+  } catch {
+    return false;
+  }
+}
+
+export const requireSameOrigin: RequestHandler = (request, response, next) => {
+  if (!sameOrigin(request)) {
+    response.status(403).json(errorResponse('invalid_origin', 'Request origin is not allowed.'));
+    return;
+  }
+  next();
+};
+
+export const requireSameOriginForCookieMutations: RequestHandler = (request, response, next) => {
+  const mutating = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method);
+  const publicAuthEndpoint = request.path === '/auth/sign-in' || request.path === '/auth/sign-up';
+  const hasSessionCookie = request.headers.cookie?.split(';').some(segment => {
+    const separator = segment.indexOf('=');
+    return separator >= 0 && segment.slice(0, separator).trim() === SESSION_COOKIE;
+  });
+  if (mutating && !publicAuthEndpoint && hasSessionCookie) {
+    requireSameOrigin(request, response, next);
+    return;
+  }
+  next();
+};
+
 export function createAuthRouter(
   clock: Clock,
   signupRateLimit: SignupRateLimitOptions = {},
+  signinRateLimit: SigninRateLimitOptions = {},
 ): Router {
   const router = Router();
 
@@ -161,8 +221,8 @@ export function createAuthRouter(
         `);
         const created = inserted.rows[0];
         await transaction.execute(sql`
-          INSERT INTO sessions (user_id, token_hash, expires_at)
-          VALUES (${created.id}, ${tokenHash}, ${new Date(now.getTime() + SESSION_ABSOLUTE_MS)})
+          INSERT INTO sessions (user_id, token_hash, created_at, last_activity_at, expires_at)
+          VALUES (${created.id}, ${tokenHash}, ${now}, ${now}, ${new Date(now.getTime() + SESSION_ABSOLUTE_MS)})
         `);
         return created;
       });
@@ -178,6 +238,50 @@ export function createAuthRouter(
     }
   });
 
+  router.post('/sign-in', json({ limit: '16kb' }), createSigninRateLimiter(clock, signinRateLimit), async (request, response, next) => {
+    const parsed = parseSignupInput(request.body);
+    if (!parsed.input) {
+      response.status(422).json(errorResponse('validation_failed', 'Check the highlighted fields.', parsed.fields));
+      return;
+    }
+
+    const { emailCanonical, password } = parsed.input;
+    try {
+      await dummyPasswordHash;
+      const [user] = await db.select({
+        id: users.id,
+        email: users.emailDisplay,
+        passwordHash: users.passwordHash,
+      })
+        .from(users)
+        .where(eq(users.emailCanonical, emailCanonical))
+        .limit(1);
+
+      let passwordMatches = false;
+      try {
+        passwordMatches = await argon2.verify(user?.passwordHash ?? await dummyPasswordHash, password);
+      } catch {
+        passwordMatches = false;
+      }
+      if (!user || !passwordMatches) {
+        response.status(401).json(errorResponse('invalid_credentials', 'Invalid email or password.'));
+        return;
+      }
+
+      const token = randomBytes(32).toString('base64url');
+      const tokenHash = createHash('sha256').update(token).digest('hex');
+      const now = clock.now();
+      await db.execute(sql`
+        INSERT INTO sessions (user_id, token_hash, created_at, last_activity_at, expires_at)
+        VALUES (${user.id}, ${tokenHash}, ${now}, ${now}, ${new Date(now.getTime() + SESSION_ABSOLUTE_MS)})
+      `);
+      response.append('Set-Cookie', sessionCookie(token));
+      response.status(200).json({ user: { id: user.id, email: user.email } });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.get('/session', async (request, response, next) => {
     const token = readSessionToken(request.headers.cookie);
     if (!token) {
@@ -187,40 +291,40 @@ export function createAuthRouter(
     }
 
     const tokenHash = createHash('sha256').update(token).digest('hex');
-    const [session] = await db.select({
-      id: sessions.id,
-      userId: users.id,
-      email: users.emailDisplay,
-      lastActivityAt: sessions.lastActivityAt,
-      expiresAt: sessions.expiresAt,
-    })
-      .from(sessions)
-      .innerJoin(users, eq(sessions.userId, users.id))
-      .where(eq(sessions.tokenHash, tokenHash))
-      .limit(1);
-
-    if (!session) {
-      response.append('Set-Cookie', clearSessionCookie());
-      unauthenticated(response);
-      return;
-    }
-
     const now = clock.now();
-    const idleExpired = session.lastActivityAt.getTime() + SESSION_IDLE_MS <= now.getTime();
-    const absoluteExpired = session.expiresAt.getTime() <= now.getTime();
-    if (idleExpired || absoluteExpired) {
-      await db.delete(sessions).where(and(eq(sessions.id, session.id), eq(sessions.tokenHash, tokenHash)));
-      response.append('Set-Cookie', clearSessionCookie());
-      unauthenticated(response);
-      return;
-    }
-
     try {
-      const lastActivityAt = new Date(Math.max(now.getTime(), session.lastActivityAt.getTime() + 1));
-      await db.update(sessions)
-        .set({ lastActivityAt })
-        .where(eq(sessions.id, session.id));
-      response.status(200).json({ user: { id: session.userId, email: session.email } });
+      const refreshed = await db.execute<{ id: string; email: string }>(sql`
+        UPDATE sessions AS session
+        SET last_activity_at = GREATEST(session.last_activity_at, ${now})
+        FROM users AS owner
+        WHERE session.user_id = owner.id
+          AND session.token_hash = ${tokenHash}
+          AND session.last_activity_at > ${new Date(now.getTime() - SESSION_IDLE_MS)}
+          AND session.expires_at > ${now}
+        RETURNING owner.id, owner.email_display AS email
+      `);
+      const user = refreshed.rows[0];
+      if (!user) {
+        await db.delete(sessions).where(eq(sessions.tokenHash, tokenHash));
+        response.append('Set-Cookie', clearSessionCookie());
+        unauthenticated(response);
+        return;
+      }
+      response.status(200).json({ user: { id: user.id, email: user.email } });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post('/logout', async (request, response, next) => {
+    try {
+      const token = readSessionToken(request.headers.cookie);
+      if (token) {
+        const tokenHash = createHash('sha256').update(token).digest('hex');
+        await db.delete(sessions).where(eq(sessions.tokenHash, tokenHash));
+      }
+      response.append('Set-Cookie', clearSessionCookie());
+      response.status(204).end();
     } catch (error) {
       next(error);
     }
