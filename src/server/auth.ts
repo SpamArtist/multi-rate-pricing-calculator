@@ -319,10 +319,28 @@ export function createAuthRouter(
   router.post('/logout', async (request, response, next) => {
     try {
       const token = readSessionToken(request.headers.cookie);
-      if (token) {
-        const tokenHash = createHash('sha256').update(token).digest('hex');
-        await db.delete(sessions).where(eq(sessions.tokenHash, tokenHash));
+      if (!token) {
+        response.append('Set-Cookie', clearSessionCookie());
+        unauthenticated(response);
+        return;
       }
+
+      const tokenHash = createHash('sha256').update(token).digest('hex');
+      const now = clock.now();
+      const revoked = await db.execute<{ id: string }>(sql`
+        DELETE FROM sessions
+        WHERE token_hash = ${tokenHash}
+          AND last_activity_at > ${new Date(now.getTime() - SESSION_IDLE_MS)}
+          AND expires_at > ${now}
+        RETURNING id
+      `);
+      if (revoked.rows.length === 0) {
+        await db.delete(sessions).where(eq(sessions.tokenHash, tokenHash));
+        response.append('Set-Cookie', clearSessionCookie());
+        unauthenticated(response);
+        return;
+      }
+
       response.append('Set-Cookie', clearSessionCookie());
       response.status(204).end();
     } catch (error) {

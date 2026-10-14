@@ -135,6 +135,42 @@ describe('sign-in sessions', () => {
     expect(sessions.rows).toHaveLength(1);
   });
 
+  it('requires a current session for logout and keeps origin rejection first', async () => {
+    const absentLogout = await createApiSession().fetch(`${baseUrl}/auth/logout`, {
+      method: 'POST',
+      headers: { origin: baseUrl },
+    });
+    expect(absentLogout.status).toBe(401);
+    expect(await absentLogout.json()).toEqual({
+      error: { code: 'unauthenticated', message: 'Sign in to continue.' },
+    });
+    expect(absentLogout.headers.getSetCookie()[0]).toMatch(/;\s*Max-Age=0(?:;|$)/i);
+
+    const expiredDevice = createApiSession();
+    expect((await signIn(expiredDevice)).status).toBe(200);
+    clock.advance(7 * 24 * 60 * 60 * 1000);
+
+    const crossOriginLogout = await expiredDevice.fetch(`${baseUrl}/auth/logout`, {
+      method: 'POST',
+      headers: { origin: 'https://attacker.example' },
+    });
+    expect(crossOriginLogout.status).toBe(403);
+    expect(await crossOriginLogout.json()).toEqual({
+      error: { code: 'invalid_origin', message: 'Request origin is not allowed.' },
+    });
+
+    const expiredLogout = await expiredDevice.fetch(`${baseUrl}/auth/logout`, {
+      method: 'POST',
+      headers: { origin: baseUrl },
+    });
+    expect(expiredLogout.status).toBe(401);
+    expect(await expiredLogout.json()).toEqual({
+      error: { code: 'unauthenticated', message: 'Sign in to continue.' },
+    });
+    expect(expiredLogout.headers.getSetCookie()[0]).toMatch(/;\s*Max-Age=0(?:;|$)/i);
+    expect(await migrationPool.query('SELECT id FROM sessions WHERE user_id = $1', [ownerId])).toMatchObject({ rows: [] });
+  });
+
   it('expires sessions at 24 hours idle and seven days absolute despite recent activity', async () => {
     const idleDevice = createApiSession();
     expect((await signIn(idleDevice)).status).toBe(200);
