@@ -1,6 +1,49 @@
 {
+  "name": "multi-rate-pricing-calculator",
   "private": true,
+  "type": "module",
   "scripts": {
-    "prototype": "node prototype/dashboard-editor/server.mjs"
+    "prototype": "node prototype/dashboard-editor/server.mjs",
+    "dev": "concurrently -k -n api,web \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "node --env-file-if-exists=.env --import tsx src/server/index.ts",
+    "dev:web": "vite --host 127.0.0.1",
+    "build": "npm run typecheck && vite build && esbuild src/server/index.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/server/index.js",
+    "start": "node --env-file-if-exists=.env dist/server/index.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "db:up": "docker compose up -d --wait postgres",
+    "db:migrate": "node --env-file-if-exists=.env --import tsx scripts/migrate.ts",
+    "check:api": "node --env-file-if-exists=.env ./node_modules/vitest/vitest.mjs run tests/api",
+    "check:db": "node --env-file-if-exists=.env ./node_modules/vitest/vitest.mjs run tests/db",
+    "check:ui": "PLAYWRIGHT_BROWSERS_PATH=.local/playwright node --env-file-if-exists=.env ./node_modules/playwright/cli.js test",
+    "check": "npm run typecheck && npm run lint && npm run check:api && npm run check:db && npm run check:ui",
+    "check:local": "sh scripts/check-local.sh",
+    "setup:local": "sh scripts/setup-local.sh"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.45.4",
+    "express": "^5.1.0",
+    "pg": "^8.16.3",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.0",
+    "@playwright/test": "^1.56.1",
+    "@types/express": "^5.0.5",
+    "@types/node": "^24.10.0",
+    "@types/pg": "^8.15.5",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "@vitejs/plugin-react": "^5.0.4",
+    "concurrently": "^9.2.1",
+    "esbuild": "^0.25.0",
+    "eslint": "^10.12.0",
+    "globals": "^16.5.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.46.2",
+    "tsx": "^4.20.6",
+    "vite": "^7.1.12",
+    "vitest": "^5.0.4"
   }
 }
