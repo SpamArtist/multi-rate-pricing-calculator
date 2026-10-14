@@ -57,6 +57,14 @@ type PersistedEditorErrors = {
   submitted: boolean;
 };
 type Route = { kind: 'dashboard' } | { kind: 'new' } | { kind: 'document'; id: string };
+type DashboardFilters = {
+  search: string;
+  status: 'all' | 'draft' | 'finalized';
+  issueDateStart: string;
+  issueDateEnd: string;
+  sort: 'desc' | 'asc';
+  page: number;
+};
 
 const EDITOR_STORAGE_PREFIX = 'pricing-calculator:editor:';
 
@@ -593,7 +601,7 @@ function App(): React.JSX.Element {
           <span className="brand-name">Priced</span>
         </a>
         <nav className="primary-nav" aria-label="Main navigation">
-          <a className="nav-link" href="#/documents">Documents</a>
+          <a className="nav-link active" href="#/documents" aria-current="page">Documents</a>
         </nav>
         <div className="account-actions">
           <span className="account-email">{user.email}</span>
@@ -620,57 +628,163 @@ function App(): React.JSX.Element {
 function Dashboard({ user, onAuthExpired }: { user: User; onAuthExpired: () => void }): React.JSX.Element {
   const [items, setItems] = React.useState<DocumentSummary[]>([]);
   const [totalItems, setTotalItems] = React.useState(0);
+  const [totalPages, setTotalPages] = React.useState(0);
+  const [filters, setFilters] = React.useState<DashboardFilters>({
+    search: '',
+    status: 'all',
+    issueDateStart: '',
+    issueDateEnd: '',
+    sort: 'desc',
+    page: 1,
+  });
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState('');
 
   React.useEffect(() => {
     let active = true;
-    void fetch('/documents')
+    const controller = new AbortController();
+    const params = new URLSearchParams();
+    if (filters.search) params.set('search', filters.search);
+    if (filters.status !== 'all') params.set('status', filters.status);
+    if (filters.issueDateStart) params.set('issueDateStart', filters.issueDateStart);
+    if (filters.issueDateEnd) params.set('issueDateEnd', filters.issueDateEnd);
+    if (filters.sort !== 'desc') params.set('sort', filters.sort);
+    if (filters.page > 1) params.set('page', String(filters.page));
+    const query = params.toString();
+
+    setLoading(true);
+    setError('');
+    void fetch(`/documents${query ? `?${query}` : ''}`, { signal: controller.signal })
       .then(async response => {
         if (response.status === 401) {
           onAuthExpired();
           return null;
         }
         if (!response.ok) throw new Error((await responseError(response)).message ?? 'Could not load documents.');
-        return response.json() as Promise<{ items: DocumentSummary[]; totalItems: number }>;
+        return response.json() as Promise<{
+          items: DocumentSummary[];
+          page: number;
+          pageSize: number;
+          totalItems: number;
+          totalPages: number;
+        }>;
       })
       .then(result => {
         if (!active || !result) return;
         setItems(result.items);
         setTotalItems(result.totalItems);
+        setTotalPages(result.totalPages);
       })
       .catch((reason: unknown) => {
-        if (active) setError(reason instanceof Error ? reason.message : 'Could not load documents.');
+        if (!active || (reason instanceof DOMException && reason.name === 'AbortError')) return;
+        setItems([]);
+        setTotalItems(0);
+        setTotalPages(0);
+        setError(reason instanceof Error ? reason.message : 'Could not load documents.');
       })
       .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
-  }, [onAuthExpired, user.id]);
+    return () => { active = false; controller.abort(); };
+  }, [filters, onAuthExpired, user.id]);
+
+  const updateFilters = (changes: Partial<DashboardFilters>): void => {
+    setFilters(current => ({ ...current, ...changes, page: 1 }));
+  };
+  const hasActiveFilters = Boolean(
+    filters.search.trim()
+    || filters.status !== 'all'
+    || filters.issueDateStart
+    || filters.issueDateEnd
+    || filters.sort !== 'desc',
+  );
+  const visiblePageNumbers = paginationPages(filters.page, totalPages);
 
   return (
     <main className="dashboard-page">
       <div className="page-heading">
-        <div>
-          <p className="eyebrow">PRIVATE WORKSPACE</p>
+        <div className="dashboard-intro">
+          <p className="eyebrow">Pricing documents</p>
           <h1>Documents</h1>
+          <p className="dashboard-subtitle">Find and continue your customer work.</p>
         </div>
-        <button className="primary-button" type="button" onClick={() => navigate('/documents/new')}>
-          New document
-        </button>
+        <div className="dashboard-actions">
+          <button className="secondary-button summary-action" type="button" disabled>
+            <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M3 16.5h14M5.5 13V8m4 5V4m4 9v-3" /></svg>
+            Generate Summary
+          </button>
+          <button className="primary-button new-document-action" type="button" onClick={() => navigate('/documents/new')}>
+            <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M10 3.5v13M3.5 10h13" /></svg>
+            New document
+          </button>
+        </div>
       </div>
 
       <section className="document-list-section" aria-labelledby="document-list-title">
         <div className="section-heading list-heading">
           <h2 id="document-list-title">All documents</h2>
-          <span>{loading ? 'Loading…' : `${totalItems} ${totalItems === 1 ? 'document' : 'documents'}`}</span>
+          <span aria-live="polite">{loading ? 'Loading…' : totalItems === 0 ? '0 documents' : `${totalItems} shown`}</span>
         </div>
         {error && <p className="request-error" role="alert">{error}</p>}
+        <form className="dashboard-filters" role="search" onSubmit={event => event.preventDefault()}>
+          <label className="search-control">
+            <span className="visually-hidden">Search customers</span>
+            <svg aria-hidden="true" viewBox="0 0 20 20"><circle cx="8.5" cy="8.5" r="5.5" /><path d="m12.5 12.5 4 4" /></svg>
+            <input
+              type="search"
+              aria-label="Search customers"
+              placeholder="Search customers"
+              value={filters.search}
+              onChange={event => updateFilters({ search: event.currentTarget.value })}
+            />
+          </label>
+          <label className="filter-select">
+            <span className="visually-hidden">Status</span>
+            <select aria-label="Status" value={filters.status} onChange={event => updateFilters({ status: event.currentTarget.value as DashboardFilters['status'] })}>
+              <option value="all">All statuses</option>
+              <option value="draft">Drafts</option>
+              <option value="finalized">Finalized</option>
+            </select>
+          </label>
+          <label className="filter-select">
+            <span className="visually-hidden">Sort by issue date</span>
+            <select aria-label="Sort by issue date" value={filters.sort} onChange={event => updateFilters({ sort: event.currentTarget.value as DashboardFilters['sort'] })}>
+              <option value="desc">Newest first</option>
+              <option value="asc">Oldest first</option>
+            </select>
+          </label>
+          <label className="date-filter">
+            <span>From</span>
+            <input aria-label="From issue date" type="date" value={filters.issueDateStart} onChange={event => updateFilters({ issueDateStart: event.currentTarget.value })} />
+          </label>
+          <label className="date-filter">
+            <span>To</span>
+            <input aria-label="To issue date" type="date" value={filters.issueDateEnd} onChange={event => updateFilters({ issueDateEnd: event.currentTarget.value })} />
+          </label>
+          {hasActiveFilters && (
+            <button className="reset-filters" type="button" onClick={() => setFilters({
+              search: '', status: 'all', issueDateStart: '', issueDateEnd: '', sort: 'desc', page: 1,
+            })}>
+              Clear filters
+            </button>
+          )}
+        </form>
         {loading ? (
           <p className="empty-state" aria-live="polite">Loading your documents…</p>
         ) : items.length === 0 ? (
-          <div className="empty-state">
-            <p>No documents yet.</p>
-            <p>Start with a name and issue date. Add customer details when ready.</p>
-          </div>
+          hasActiveFilters ? (
+            <div className="empty-state">
+              <p>No documents match these filters.</p>
+              <button className="text-button" type="button" onClick={() => setFilters({
+                search: '', status: 'all', issueDateStart: '', issueDateEnd: '', sort: 'desc', page: 1,
+              })}>
+                Clear filters
+              </button>
+            </div>
+          ) : (
+            <div className="empty-state">
+              <p>No documents yet.</p>
+              <p>Start with a name and issue date. Add customer details when ready.</p>
+            </div>
+          )
         ) : (
           <div className="table-scroll">
             <table className="document-table">
@@ -694,16 +808,45 @@ function Dashboard({ user, onAuthExpired }: { user: User; onAuthExpired: () => v
                     <td>{item.customerName || '—'}</td>
                     <td>{formatDate(item.issueDate)}</td>
                     <td><span className={`status-badge ${item.status}`}>{item.status === 'draft' ? 'Draft' : 'Finalized'}</span></td>
-                    <td className="number-cell">{formatEuro(item.amounts.totalCents)}</td>
+                    <td className="number-cell"><span className="row-total"><span>{formatEuro(item.amounts.totalCents)}</span><span className="row-arrow" aria-hidden="true">→</span></span></td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         )}
+        {!loading && totalPages > 0 && (
+          <nav className="document-pagination" aria-label="Document pages">
+            <button type="button" aria-label="Previous page" disabled={filters.page <= 1} onClick={() => setFilters(current => ({ ...current, page: current.page - 1 }))}>←</button>
+            {visiblePageNumbers.map((pageNumber, index) => typeof pageNumber === 'number' ? (
+              <button
+                type="button"
+                key={pageNumber}
+                aria-label={`Page ${pageNumber}`}
+                aria-current={pageNumber === filters.page ? 'page' : undefined}
+                onClick={() => setFilters(current => ({ ...current, page: pageNumber }))}
+              >
+                {pageNumber}
+              </button>
+            ) : <span className="page-ellipsis" key={`ellipsis-${index}`} aria-hidden="true">…</span>)}
+            <button type="button" aria-label="Next page" disabled={filters.page >= totalPages} onClick={() => setFilters(current => ({ ...current, page: current.page + 1 }))}>→</button>
+          </nav>
+        )}
       </section>
     </main>
   );
+}
+
+function paginationPages(current: number, total: number): Array<number | 'ellipsis'> {
+  if (total <= 7) return Array.from({ length: total }, (_, index) => index + 1);
+  const pages = new Set([1, total, current - 1, current, current + 1]);
+  const ordered = [...pages].filter(page => page >= 1 && page <= total).sort((left, right) => left - right);
+  const result: Array<number | 'ellipsis'> = [];
+  for (const [index, page] of ordered.entries()) {
+    if (index > 0 && page - ordered[index - 1] > 1) result.push('ellipsis');
+    result.push(page);
+  }
+  return result;
 }
 
 function DocumentEditor({

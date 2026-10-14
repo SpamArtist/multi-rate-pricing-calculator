@@ -102,6 +102,173 @@ test('starts locally, saves a draft, reopens from Documents, and verifies persis
   }
 });
 
+test('searches, filters, sorts, pages, and reopens API-backed Ledger rows', async ({ page }) => {
+  const email = `ledger-list-${randomUUID()}@example.com`;
+  const password = 'A🔐b$cD';
+  const documentIds = new Map<number, string>();
+  try {
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Create account' }).click();
+    await page.getByLabel('Email address').fill(email);
+    await page.getByLabel('Password').fill(password);
+    await page.getByRole('button', { name: 'Create account' }).click();
+    await expect(page.getByRole('heading', { name: 'Documents', exact: true })).toBeVisible();
+
+    const documentsUrl = new URL('/documents', page.url()).toString();
+    const origin = new URL(page.url()).origin;
+    for (let day = 1; day <= 27; day += 1) {
+      const created = await page.context().request.post(documentsUrl, {
+        headers: { origin },
+        data: {
+          title: `Acme customer ${String(day).padStart(2, '0')}`,
+          customerName: day === 26 ? 'North ACME' : 'Acme Studio',
+          issueDate: `2026-10-${String(day).padStart(2, '0')}`,
+        },
+      });
+      expect(created.status()).toBe(201);
+      const document = await created.json() as { id: string };
+      documentIds.set(day, document.id);
+      if (day === 26) {
+        const line = await page.context().request.post(`${documentsUrl}/${document.id}/line-items`, {
+          headers: { origin },
+          data: { description: 'Finalized line', quantity: 1, unitPriceCents: 1200 },
+        });
+        expect(line.status()).toBe(201);
+        const finalized = await page.context().request.post(`${documentsUrl}/${document.id}/finalize`, {
+          headers: { origin },
+          data: {},
+        });
+        expect(finalized.status()).toBe(200);
+      }
+    }
+    const other = await page.context().request.post(documentsUrl, {
+      headers: { origin },
+      data: { title: 'Beta customer', customerName: 'Beta Studio', issueDate: '2026-10-28' },
+    });
+    expect(other.status()).toBe(201);
+
+    await page.reload();
+    await expect(page.getByText('28 shown')).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Acme customer 27' })).toBeVisible();
+    await expect(page.locator('tbody tr')).toHaveCount(25);
+
+    const searchResponsePromise = page.waitForResponse(response => {
+      const url = new URL(response.url());
+      return url.pathname === '/documents' && url.searchParams.get('search') === '  acME  ';
+    });
+    await page.getByLabel('Search customers').fill('  acME  ');
+    const searchResponse = await searchResponsePromise;
+    expect(searchResponse.status()).toBe(200);
+    const searchResult = await searchResponse.json() as { items: Array<{ title: string }>; totalItems: number; totalPages: number };
+    expect(searchResult).toMatchObject({ totalItems: 27, totalPages: 2 });
+    await expect(page.getByText('27 shown')).toBeVisible();
+    await expect(page.locator('tbody tr')).toHaveCount(25);
+
+    const secondPageResponsePromise = page.waitForResponse(response => {
+      const url = new URL(response.url());
+      return url.pathname === '/documents' && url.searchParams.get('page') === '2';
+    });
+    await page.getByRole('button', { name: 'Page 2' }).click();
+    const secondPageResponse = await secondPageResponsePromise;
+    expect(secondPageResponse.status()).toBe(200);
+    await expect(page.getByRole('button', { name: 'Page 2' })).toHaveAttribute('aria-current', 'page');
+    await expect(page.locator('tbody tr')).toHaveCount(2);
+    await expect(page.getByRole('link', { name: 'Acme customer 01' })).toBeVisible();
+
+    const draftResponsePromise = page.waitForResponse(response => {
+      const url = new URL(response.url());
+      return url.pathname === '/documents' && url.searchParams.get('status') === 'draft';
+    });
+    await page.getByLabel('Status').selectOption('draft');
+    expect((await draftResponsePromise).status()).toBe(200);
+    await expect(page.getByRole('button', { name: 'Page 1' })).toHaveAttribute('aria-current', 'page');
+    await expect(page.getByText('26 shown')).toBeVisible();
+    await expect(page.locator('tbody tr')).toHaveCount(25);
+
+    await page.getByRole('button', { name: 'Page 2' }).click();
+    await expect(page.getByRole('link', { name: 'Acme customer 01' })).toBeVisible();
+    const sortResponsePromise = page.waitForResponse(response => {
+      const url = new URL(response.url());
+      return url.pathname === '/documents' && url.searchParams.get('sort') === 'asc';
+    });
+    await page.getByLabel('Sort by issue date').selectOption('asc');
+    const sortResponse = await sortResponsePromise;
+    expect(sortResponse.status()).toBe(200);
+    const sortedResult = await sortResponse.json() as { items: Array<{ title: string }>; page: number; totalItems: number };
+    expect(sortedResult).toMatchObject({ page: 1, totalItems: 26 });
+    expect(sortedResult.items[0]?.title).toBe('Acme customer 01');
+    await expect(page.getByRole('button', { name: 'Page 1' })).toHaveAttribute('aria-current', 'page');
+
+    await page.getByLabel('From issue date').fill('2026-10-10');
+    const ascendingResponsePromise = page.waitForResponse(response => {
+      const url = new URL(response.url());
+      return url.pathname === '/documents'
+        && url.searchParams.get('sort') === 'asc'
+        && url.searchParams.get('issueDateStart') === '2026-10-10'
+        && url.searchParams.get('issueDateEnd') === '2026-10-20';
+    });
+    await page.getByLabel('To issue date').fill('2026-10-20');
+    const ascendingResponse = await ascendingResponsePromise;
+    expect(ascendingResponse.status()).toBe(200);
+    const ascendingResult = await ascendingResponse.json() as { items: Array<{ title: string }>; page: number; totalItems: number };
+    expect(ascendingResult).toMatchObject({ page: 1, totalItems: 11 });
+    expect(ascendingResult.items[0]?.title).toBe('Acme customer 10');
+    await expect(page.getByRole('button', { name: 'Page 1' })).toHaveAttribute('aria-current', 'page');
+    await expect(page.getByText('11 shown')).toBeVisible();
+    await page.screenshot({ fullPage: true }).then(body => test.info().attach('issue-20-ledger-dashboard-filtered.png', { body, contentType: 'image/png' }));
+
+    const filteredApi = await page.context().request.get(
+      `${documentsUrl}?search=${encodeURIComponent('  acME  ')}&status=draft&issueDateStart=2026-10-10&issueDateEnd=2026-10-20&sort=asc`,
+    );
+    expect(filteredApi.status()).toBe(200);
+    const filteredApiBody = await filteredApi.text();
+    expect(JSON.parse(filteredApiBody)).toMatchObject({ page: 1, pageSize: 25, totalItems: 11, totalPages: 1 });
+    await test.info().attach('issue-20-filtered-list.json', { body: filteredApiBody, contentType: 'application/json' });
+
+    const resetResponsePromise = page.waitForResponse(response => {
+      const url = new URL(response.url());
+      return url.pathname === '/documents' && url.search === '';
+    });
+    await page.getByRole('button', { name: 'Clear filters' }).click();
+    expect((await resetResponsePromise).status()).toBe(200);
+    await expect(page.getByLabel('Search customers')).toHaveValue('');
+    await expect(page.getByLabel('Status')).toHaveValue('all');
+    await expect(page.getByLabel('Sort by issue date')).toHaveValue('desc');
+    await expect(page.getByLabel('From issue date')).toHaveValue('');
+    await expect(page.getByLabel('To issue date')).toHaveValue('');
+    await expect(page.getByText('28 shown')).toBeVisible();
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+    await page.screenshot({ fullPage: true }).then(body => test.info().attach('issue-20-ledger-dashboard-mobile.png', { body, contentType: 'image/png' }));
+    await page.setViewportSize({ width: 1280, height: 900 });
+
+    await page.reload();
+    await expect(page.getByRole('heading', { name: 'Documents', exact: true })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Acme customer 27' })).toBeVisible();
+    const targetId = documentIds.get(10)!;
+    const targetRow = page.locator('tbody tr').filter({ has: page.getByRole('link', { name: 'Acme customer 10' }) });
+    const customerCell = targetRow.getByRole('cell', { name: 'Acme Studio' });
+    await customerCell.scrollIntoViewIfNeeded();
+    const customerCellRect = await customerCell.evaluate(element => {
+      const { x, y, width, height } = element.getBoundingClientRect();
+      return { x, y, width, height };
+    });
+    await page.mouse.click(customerCellRect.x + customerCellRect.width / 2, customerCellRect.y + customerCellRect.height / 2);
+    await expect(page.getByRole('heading', { name: 'Acme customer 10' })).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`#\\/documents\\/${targetId}$`));
+    await expect(page.locator('body')).not.toContainText(targetId);
+    await page.reload();
+    await expect(page.getByRole('heading', { name: 'Acme customer 10' })).toBeVisible();
+    const persisted = await page.context().request.get(new URL(`/documents/${targetId}`, page.url()).toString());
+    expect(persisted.status()).toBe(200);
+    const persistedBody = await persisted.text();
+    expect(JSON.parse(persistedBody)).toMatchObject({ id: targetId, title: 'Acme customer 10', issueDate: '2026-10-10', status: 'draft' });
+    await test.info().attach('issue-20-ledger-document.json', { body: persistedBody, contentType: 'application/json' });
+  } finally {
+    await migrationPool.query('DELETE FROM users WHERE email_canonical = $1', [email.toLowerCase()]);
+  }
+});
+
 test('saves incomplete new document, repairs it, finalizes snapshot, and reloads disabled inputs', async ({ page }) => {
   const email = `finalize-ui-${randomUUID()}@example.com`;
   const password = 'A🔐b$cD';
