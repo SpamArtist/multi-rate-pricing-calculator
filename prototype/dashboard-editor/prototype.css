@@ -90,7 +90,6 @@ svg { display: block; flex: none; }
 .document-table .table-link { text-decoration: none; }
 .document-table .table-link::after { content: ''; position: absolute; inset: 0; }
 .document-table .table-link:focus-visible::after { outline: 2px solid var(--primary); outline-offset: -2px; }
-.table-document-name { display: block; margin-block-start: 0.15rem; color: var(--muted); font-size: 0.76rem; font-weight: 500; }
 .table-scroll { overflow-x: auto; }
 .pagination-note { margin-block-start: 1rem; color: var(--muted); font-size: 0.81rem; }
 

@@ -1,19 +1,19 @@
 const initialDocs = [
-  { id: 'PD-1048', name: 'Alpen Studio', saved: true, customer: 'Alpen Studio', date: '2026-10-14', status: 'draft', lines: [
+  { id: 'PD-1048', name: 'Brand workshop', saved: true, customer: 'Alpen Studio', date: '2026-10-14', status: 'draft', lines: [
     { id: 1, name: 'Brand workshop', quantity: 3, price: 1999, discount: 1000, tax: 1900 },
     { id: 2, name: 'Print-ready files', quantity: 2, price: 250, discount: 0, tax: 750 }
   ] },
-  { id: 'PD-1047', name: 'Northline Coffee', saved: true, customer: 'Northline Coffee', date: '2026-10-11', status: 'finalized', lines: [
+  { id: 'PD-1047', name: 'Menu system', saved: true, customer: 'Northline Coffee', date: '2026-10-11', status: 'finalized', lines: [
     { id: 3, name: 'Menu system', quantity: 1, price: 140000, discount: 10000, tax: 1900 },
     { id: 4, name: 'Seasonal insert', quantity: 2, price: 12500, discount: 0, tax: 1900 }
   ] },
-  { id: 'PD-1046', name: 'Mira & Co.', saved: true, customer: 'Mira & Co.', date: '2026-10-08', status: 'draft', lines: [
+  { id: 'PD-1046', name: 'Consultation', saved: true, customer: 'Mira & Co.', date: '2026-10-08', status: 'draft', lines: [
     { id: 5, name: 'Consultation', quantity: 4, price: 9500, discount: 0, tax: 1900 }
   ] },
-  { id: 'PD-1045', name: 'Berg Hotel', saved: true, customer: 'Berg Hotel', date: '2026-09-30', status: 'finalized', lines: [
+  { id: 'PD-1045', name: 'Room photography', saved: true, customer: 'Berg Hotel', date: '2026-09-30', status: 'finalized', lines: [
     { id: 6, name: 'Room photography', quantity: 2, price: 37500, discount: 5000, tax: 1900 }
   ] },
-  { id: 'PD-1044', name: 'Atelier Form', saved: true, customer: 'Atelier Form', date: '2026-09-22', status: 'finalized', lines: [
+  { id: 'PD-1044', name: 'Product catalog', saved: true, customer: 'Atelier Form', date: '2026-09-22', status: 'finalized', lines: [
     { id: 7, name: 'Product catalog', quantity: 1, price: 225000, discount: 25000, tax: 750 }
   ] }
 ];
@@ -99,7 +99,7 @@ const badge = (status, saved = true) => `<span class="badge ${status}"><span cla
 const title = () => `<div class="brand-mark" aria-hidden="true">P<span>.</span></div><strong class="brand-name">Priced</strong>`;
 const navButton = (view, label, glyph) => `<button type="button" data-action="view" data-view="${view}" class="nav-link ${state.view === view ? 'active' : ''}">${icon(glyph)}<span>${label}</span></button>`;
 const newButton = () => `<button type="button" class="button primary" data-action="new">${icon('plus')}<span>New document</span></button>`;
-const notice = () => state.notice ? `<p class="notice" role="status">${safe(state.notice)}${state.noticeTargetId ? ` <a href="#document=${safe(state.noticeTargetId)}" data-action="open" data-id="${safe(state.noticeTargetId)}">Open ${safe(state.noticeTargetId)}</a>` : ''}</p>` : '';
+const notice = () => state.notice ? `<p class="notice" role="status">${safe(state.notice)}${state.noticeTargetId ? ` <a href="#document=${safe(state.noticeTargetId)}" data-action="open" data-id="${safe(state.noticeTargetId)}">Open copy</a>` : ''}</p>` : '';
 
 function filters(compact = false) {
   return `<form class="filters ${compact ? 'compact' : ''}" id="filters" autocomplete="off">
@@ -126,13 +126,13 @@ function report() {
 function documentRows(type = 'list') {
   const found = state.listStart && state.listEnd && state.listStart > state.listEnd ? [] : filteredDocs();
   if (!found.length) return `<div class="empty-list">No documents match these filters. <button type="button" class="text-button" data-action="clear-filters">Clear filters</button></div>`;
-  if (type === 'table') return `<div class="table-scroll"><table class="document-table"><thead><tr><th>Document</th><th>Customer</th><th>Issue date</th><th>Status</th><th class="number">Total</th><th><span class="sr-only">Open</span></th></tr></thead><tbody>${found.map(item => `<tr><td><a class="table-link" href="#document=${safe(item.id)}" data-action="open" data-id="${safe(item.id)}" aria-label="Open ${safe(item.id)}">${safe(item.id)}${item.name && item.name !== item.customer ? `<span class="table-document-name">${safe(item.name)}</span>` : ''}</a></td><td>${safe(item.customer || 'Unnamed customer')}</td><td>${dateLabel(item.date)}</td><td>${badge(item.status, item.saved)}</td><td class="number">${euros(totals(item).total)}</td><td><span aria-hidden="true">${icon('arrow')}</span></td></tr>`).join('')}</tbody></table></div>`;
+  if (type === 'table') return `<div class="table-scroll"><table class="document-table"><thead><tr><th>Title</th><th>Customer</th><th>Issue date</th><th>Status</th><th class="number">Total</th><th><span class="sr-only">Open</span></th></tr></thead><tbody>${found.map(item => `<tr><td><a class="table-link" href="#document=${safe(item.id)}" data-action="open" data-id="${safe(item.id)}" aria-label="Open ${safe(item.name || 'Untitled document')}">${safe(item.name || 'Untitled document')}</a></td><td>${safe(item.customer || 'Unnamed customer')}</td><td>${dateLabel(item.date)}</td><td>${badge(item.status, item.saved)}</td><td class="number">${euros(totals(item).total)}</td><td><span aria-hidden="true">${icon('arrow')}</span></td></tr>`).join('')}</tbody></table></div>`;
   return `<div class="document-list ${type}">${found.map(item => `<button type="button" class="document-entry ${state.currentId === item.id ? 'selected' : ''}" data-action="open" data-id="${item.id}"><span class="entry-top"><strong>${safe(item.name || item.customer || 'Untitled document')}</strong><span>${euros(totals(item).total)}</span></span><span class="entry-bottom"><span>${item.id} · ${dateLabel(item.date)}</span>${badge(item.status, item.saved)}</span></button>`).join('')}</div>`;
 }
 
 function editorHeading() {
   const current = doc();
-  return `<div class="editor-heading"><div><span class="section-label">${current.id} · ${!current.saved ? 'Unsaved document' : current.status === 'draft' ? 'Editable draft' : 'Fixed snapshot'}</span><h1>${safe(current.name || 'Untitled document')}</h1><p>Issue date ${dateLabel(current.date)}</p></div><div class="editor-actions">${badge(current.status, current.saved)}${!current.saved ? '<button type="button" class="button secondary" data-action="save-draft">Save as draft</button>' : `<button type="button" class="button secondary" data-action="duplicate">${icon('copy')}<span>Duplicate</span></button>`}<button type="button" class="button secondary" data-action="print">${icon('print')}<span>Print</span></button></div></div>`;
+  return `<div class="editor-heading"><div><span class="section-label">${variant() === 'B' ? '' : `${current.id} · `}${!current.saved ? 'Unsaved document' : current.status === 'draft' ? 'Editable draft' : 'Fixed snapshot'}</span><h1>${safe(current.name || 'Untitled document')}</h1><p>Issue date ${dateLabel(current.date)}</p></div><div class="editor-actions">${badge(current.status, current.saved)}${!current.saved ? '<button type="button" class="button secondary" data-action="save-draft">Save as draft</button>' : `<button type="button" class="button secondary" data-action="duplicate">${icon('copy')}<span>Duplicate</span></button>`}<button type="button" class="button secondary" data-action="print">${icon('print')}<span>Print</span></button></div></div>`;
 }
 
 function metadata() {
@@ -182,7 +182,7 @@ function editorB() {
   return `<main class="b-editor"><button type="button" class="back-link" data-action="view" data-view="dashboard">${icon('back')} All documents</button>${editorHeading()}<div class="b-editor-content">${metadata()}${lineItems('ledger')}${amountBreakdown('band')}</div></main>`;
 }
 function renderB() {
-  return `<div class="shell variant-b"><header class="b-topbar"><div class="brand">${title()}</div><nav aria-label="Main navigation">${navButton('dashboard', 'Documents', 'file')}${navButton('editor', 'Editor', 'chart')}</nav><span class="prototype-tag">Layout B · Ledger</span><div class="profile">SA</div></header>${notice()}${state.view === 'dashboard' ? dashboardB() : editorB()}</div>`;
+  return `<div class="shell variant-b"><header class="b-topbar"><div class="brand">${title()}</div><nav aria-label="Main navigation">${navButton('dashboard', 'Documents', 'file')}</nav><span class="prototype-tag">Layout B · Ledger</span><div class="profile">SA</div></header>${notice()}${state.view === 'dashboard' ? dashboardB() : editorB()}</div>`;
 }
 
 function dashboardC() {
@@ -251,19 +251,19 @@ app.addEventListener('click', event => {
     copy.date = localToday();
     copy.lines.forEach(line => { line.id = state.nextLineId++; });
     state.docs.unshift(copy);
-    state.notice = `Created editable draft ${copy.id} from ${source.id}.`;
+    state.notice = `Created an editable copy of “${source.name || 'Untitled document'}”.`;
     state.noticeTargetId = copy.id;
   }
   if (action === 'save-draft') {
     doc().saved = true;
-    state.notice = `${doc().id} saved as draft.`;
+    state.notice = `“${doc().name || 'Untitled document'}” saved as draft.`;
   }
   if (action === 'add-line') doc().lines.push({ id: state.nextLineId++, name: '', quantity: 1, price: 0, discount: 0, tax: 0 });
   if (action === 'remove-line') doc().lines = doc().lines.filter(line => String(line.id) !== control.dataset.id);
   if (action === 'finalize') {
     const current = doc();
     if (!current.customer.trim() || !current.date || !current.lines.length || current.lines.some(line => !line.name.trim())) state.notice = 'Add a customer, issue date, and named line item before finalizing.';
-    else { current.status = 'finalized'; current.saved = true; state.notice = `${current.id} finalized. Its details are now fixed.`; }
+    else { current.status = 'finalized'; current.saved = true; state.notice = `“${current.name || 'Untitled document'}” finalized. Its details are now fixed.`; }
   }
   if (action === 'clear-filters') { state.search = ''; state.status = 'all'; state.listStart = ''; state.listEnd = ''; }
   if (action === 'print') { window.print(); return; }
