@@ -1,6 +1,6 @@
 # Production check scaffold
 
-This repository keeps the approved in-memory design prototype separate from the production seams. Production checks use a TypeScript API, React app, Drizzle migrations, and real PostgreSQL. They establish health, role separation, tenant isolation, authentication, and browser flows; document lifecycle arrives in a later slice.
+This repository keeps the approved in-memory design prototype separate from the production seams. Production checks use a TypeScript API, React app, Drizzle migrations, and real PostgreSQL. They establish health, role separation, tenant isolation, authentication, and draft-document flows. The current document slice covers empty drafts and metadata edits; line-item editing and finalization remain future work.
 
 ## One-command local setup
 
@@ -50,13 +50,15 @@ Playwright launches API and React together through `npm run dev`, uses semantic 
 
 Sign-in trims and validates credentials with the same Unicode rules as sign-up, uses case-insensitive canonical email lookup, and returns one generic credential failure for unknown email or wrong password. Every successful sign-in creates a separate opaque session. The API enforces 24-hour idle and seven-day absolute expiry; session checks refresh idle activity without moving the absolute bound. Every cookie-bearing state-changing request checks same-origin proof. Logout returns `401 unauthenticated` for absent or expired sessions and revokes only a current session; cross-origin cookie requests retain `403 invalid_origin` precedence. Sign-in attempts are throttled by canonical email and client IP.
 
-The current browser build has a private-workspace welcome screen but no document editor. Expiry returns the browser to sign-in on the next session check or reload. Editor draft preservation cannot be exercised until editor inputs exist; credential values are not persisted for recovery.
+After sign-in, the Documents page lists the owner's drafts. New document opens a local unsaved editor with the viewer's current local date and no server ID. Saving requires a nonblank title and real calendar date; customer name and lines may be empty. A saved draft can be reopened from the list and its title, customer, and date updated. Expiry returns the browser to sign-in on the next session check or reload. Unsaved editor values are kept in per-owner, per-document browser session storage and restored when the same owner signs in again; credentials are never stored for recovery.
 
 ## Latest local verification
 
 Verified 2026-10-14 against local PostgreSQL:
 
-- `npm run db:migrate` — exit 0; session clock grant migration applied as `pricing_migrator`.
-- `npm run check` — exit 0: typecheck and lint passed; API 4 files / 14 tests passed; DB 1 file / 7 tests passed as `pricing_runtime`; UI 2 files / 4 Playwright tests passed.
+- `npm run check` — exit 0: typecheck and lint passed; API 5 files / 18 tests passed; DB 1 file / 7 tests passed as `pricing_runtime`; UI 6 Playwright tests passed across 3 files.
 - `npm run build` — exit 0; Vite built React and esbuild produced API bundle.
-- `git diff --check` — exit 0.
+- `tests/ui/documents.spec.ts` visible evidence — attaches `issue-14-ledger-editor.png` and `issue-14-ledger-editor-mobile.png`; assertions cover the saved editor and dashboard values, with no horizontal overflow at 390px.
+- `tests/ui/documents.spec.ts` persisted API evidence — attaches `issue-14-persisted-document.json` after reload and edit. The response asserts title `Brand workshop`, customer `Alpen Studio`, issue date `2026-11-02`, empty `lineItems`, zero `totalCents`, and no `ownerId`.
+- `tests/ui/documents.spec.ts` recovery evidence — expires the session, verifies sign-in, then signs in as the same owner and verifies unsaved title and customer return.
+- Scope limit — this slice does not add or edit line items; empty drafts return ordered `lineItems: []` and zero amounts. API serialization tests cover ordered populated lines.
