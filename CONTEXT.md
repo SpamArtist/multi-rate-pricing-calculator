@@ -8,6 +8,9 @@ The language for creating, finalizing, and summarizing priced customer documents
 A generic priced record prepared for a customer. It can serve a quoting or invoicing workflow without choosing a formal quote or invoice type.
 _Avoid_: Quote, invoice (as document types)
 
+**Document title**:
+The required name of a saved document, distinct from the customer's name.
+
 **Document owner**:
 The individual registered user to whom a document belongs. Each document has exactly one owner.
 _Avoid_: Business account, team
@@ -17,7 +20,7 @@ The person or organization named on a document.
 _Avoid_: Client, account
 
 **Line item**:
-One priced item or service on a document, with a quantity and optional discount and tax.
+One priced item or service on a document, with a quantity, description, optional discount, and optional tax. Its description may be blank in a draft but is required at finalization.
 _Avoid_: Row, charge
 
 **Line subtotal**:
@@ -50,7 +53,7 @@ The irreversible transition of a valid draft into a finalized document.
 Creating a new draft from an existing document, whether that document is a draft or finalized.
 
 **Issue date**:
-The calendar date assigned to a document for listing and reporting.
+The calendar date required when a document is saved, used for listing and reporting.
 
 **Summary report**:
 An aggregate view of finalized documents whose issue dates fall in its selected range, independent of dashboard list filters.
