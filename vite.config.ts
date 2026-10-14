@@ -12,6 +12,7 @@ export default defineConfig(({ mode }) => {
       proxy: {
         '/auth': { target: `http://127.0.0.1:${env.API_PORT ?? 4174}`, changeOrigin: false },
         '/documents': { target: `http://127.0.0.1:${env.API_PORT ?? 4174}`, changeOrigin: false },
+        '/reports': { target: `http://127.0.0.1:${env.API_PORT ?? 4174}`, changeOrigin: false },
         '/health': { target: `http://127.0.0.1:${env.API_PORT ?? 4174}`, changeOrigin: false },
       },
     },

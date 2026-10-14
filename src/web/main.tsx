@@ -35,6 +35,12 @@ type DocumentSummary = {
   status: 'draft' | 'finalized';
   amounts: Amounts;
 };
+type SummaryReport = {
+  start: string;
+  end: string;
+  finalizedDocumentCount: number;
+  amounts: Amounts;
+};
 type DocumentData = DocumentSummary & {
   createdAt: string;
   updatedAt: string;
@@ -274,6 +280,18 @@ function localToday(): string {
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+function localMonthRange(): { start: string; end: string } {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = today.getMonth();
+  const monthString = String(month + 1).padStart(2, '0');
+  const lastDay = new Date(year, month + 1, 0).getDate();
+  return {
+    start: `${year}-${monthString}-01`,
+    end: `${year}-${monthString}-${String(lastDay).padStart(2, '0')}`,
+  };
 }
 
 function editorStorageKey(ownerId: string, documentId?: string): string {
@@ -639,6 +657,16 @@ function Dashboard({ user, onAuthExpired }: { user: User; onAuthExpired: () => v
   });
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState('');
+  const [reportOpen, setReportOpen] = React.useState(false);
+  const [reportRange, setReportRange] = React.useState(localMonthRange);
+  const [reportSummary, setReportSummary] = React.useState<SummaryReport | null>(null);
+  const [reportLoading, setReportLoading] = React.useState(false);
+  const [reportError, setReportError] = React.useState('');
+  const reportRangeError = !isCalendarDate(reportRange.start) || !isCalendarDate(reportRange.end)
+    ? 'Enter both report dates.'
+    : reportRange.start > reportRange.end
+      ? 'End date must be on or after start date.'
+      : '';
 
   React.useEffect(() => {
     let active = true;
@@ -686,6 +714,44 @@ function Dashboard({ user, onAuthExpired }: { user: User; onAuthExpired: () => v
     return () => { active = false; controller.abort(); };
   }, [filters, onAuthExpired, user.id]);
 
+  React.useEffect(() => {
+    if (!reportOpen) return undefined;
+    if (reportRangeError) {
+      setReportSummary(null);
+      setReportLoading(false);
+      setReportError('');
+      return undefined;
+    }
+
+    let active = true;
+    const controller = new AbortController();
+    const query = new URLSearchParams({ start: reportRange.start, end: reportRange.end });
+    setReportLoading(true);
+    setReportError('');
+    void fetch(`/reports/summary?${query}`, { signal: controller.signal })
+      .then(async response => {
+        if (response.status === 401) {
+          onAuthExpired();
+          return null;
+        }
+        if (!response.ok) {
+          const result = await responseError(response);
+          throw new Error(result.message ?? 'Could not load summary.');
+        }
+        return response.json() as Promise<SummaryReport>;
+      })
+      .then(result => {
+        if (active && result) setReportSummary(result);
+      })
+      .catch((reason: unknown) => {
+        if (!active || (reason instanceof DOMException && reason.name === 'AbortError')) return;
+        setReportSummary(null);
+        setReportError(reason instanceof Error ? reason.message : 'Could not load summary.');
+      })
+      .finally(() => { if (active) setReportLoading(false); });
+    return () => { active = false; controller.abort(); };
+  }, [onAuthExpired, reportOpen, reportRange.end, reportRange.start, reportRangeError, user.id]);
+
   const updateFilters = (changes: Partial<DashboardFilters>): void => {
     setFilters(current => ({ ...current, ...changes, page: 1 }));
   };
@@ -697,8 +763,12 @@ function Dashboard({ user, onAuthExpired }: { user: User; onAuthExpired: () => v
     || filters.sort !== 'desc',
   );
   const visiblePageNumbers = paginationPages(filters.page, totalPages);
+  const currentReport = reportSummary?.start === reportRange.start && reportSummary.end === reportRange.end
+    ? reportSummary
+    : null;
 
   return (
+    <div className={`dashboard-layout${reportOpen ? ' summary-open' : ''}`}>
     <main className="dashboard-page">
       <div className="page-heading">
         <div className="dashboard-intro">
@@ -707,7 +777,13 @@ function Dashboard({ user, onAuthExpired }: { user: User; onAuthExpired: () => v
           <p className="dashboard-subtitle">Find and continue your customer work.</p>
         </div>
         <div className="dashboard-actions">
-          <button className="secondary-button summary-action" type="button" disabled>
+          <button
+            className="secondary-button summary-action"
+            type="button"
+            aria-controls="summary-report-sidebar"
+            aria-expanded={reportOpen}
+            onClick={() => setReportOpen(true)}
+          >
             <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M3 16.5h14M5.5 13V8m4 5V4m4 9v-3" /></svg>
             Generate Summary
           </button>
@@ -834,6 +910,75 @@ function Dashboard({ user, onAuthExpired }: { user: User; onAuthExpired: () => v
         )}
       </section>
     </main>
+    <aside
+      id="summary-report-sidebar"
+      className="summary-sidebar"
+      aria-label="Summary report"
+      hidden={!reportOpen}
+    >
+      <div className="summary-sidebar-head">
+        <span>Generated summary</span>
+        <button className="summary-close" type="button" aria-label="Close summary" onClick={() => setReportOpen(false)}>×</button>
+      </div>
+      <section className="summary-report" aria-label="Summary report">
+        <div className="summary-report-heading">
+          <div>
+            <span className="summary-label">Summary report</span>
+            <h2>Issue date totals</h2>
+          </div>
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 20h16M7 16V9m5 7V4m5 12v-5" /></svg>
+        </div>
+        <div className="summary-date-fields">
+          <label>
+            <span>From</span>
+            <input
+              aria-label="Summary start date"
+              aria-invalid={Boolean(reportRangeError)}
+              aria-describedby={reportRangeError ? 'summary-range-error' : undefined}
+              type="date"
+              value={reportRange.start}
+              onChange={event => {
+                const start = event.currentTarget.value;
+                setReportRange(current => ({ ...current, start }));
+              }}
+            />
+          </label>
+          <label>
+            <span>To</span>
+            <input
+              aria-label="Summary end date"
+              aria-invalid={Boolean(reportRangeError)}
+              aria-describedby={reportRangeError ? 'summary-range-error' : undefined}
+              type="date"
+              value={reportRange.end}
+              onChange={event => {
+                const end = event.currentTarget.value;
+                setReportRange(current => ({ ...current, end }));
+              }}
+            />
+          </label>
+        </div>
+        {reportRangeError ? (
+          <p className="field-error summary-range-error" id="summary-range-error" role="alert">{reportRangeError}</p>
+        ) : reportError ? (
+          <p className="request-error" role="alert">{reportError}</p>
+        ) : (
+          <p className="summary-report-note">Finalized documents only · independent of list filters</p>
+        )}
+        <div className="summary-report-major" aria-live="polite">
+          <span>Total</span>
+          <strong>{currentReport ? formatEuro(currentReport.amounts.totalCents) : '—'}</strong>
+        </div>
+        <dl className="summary-amount-list">
+          <div><dt>Documents</dt><dd>{currentReport ? currentReport.finalizedDocumentCount : reportLoading ? 'Loading…' : '—'}</dd></div>
+          <div><dt>Subtotal</dt><dd>{currentReport ? formatEuro(currentReport.amounts.subtotalCents) : '—'}</dd></div>
+          <div><dt>Discounts</dt><dd>{currentReport ? `−${formatEuro(currentReport.amounts.discountCents)}` : '—'}</dd></div>
+          <div><dt>Taxable</dt><dd>{currentReport ? formatEuro(currentReport.amounts.taxableCents) : '—'}</dd></div>
+          <div><dt>Tax</dt><dd>{currentReport ? formatEuro(currentReport.amounts.taxCents) : '—'}</dd></div>
+        </dl>
+      </section>
+    </aside>
+    </div>
   );
 }
 

@@ -1,0 +1,12 @@
+{
+  "start": "2026-10-01",
+  "end": "2026-10-31",
+  "finalizedDocumentCount": 1,
+  "amounts": {
+    "subtotalCents": 2000,
+    "discountCents": 100,
+    "taxableCents": 1900,
+    "taxCents": 190,
+    "totalCents": 2090
+  }
+}
