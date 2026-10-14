@@ -10,6 +10,7 @@ export default defineConfig(({ mode }) => {
       port: Number(env.WEB_PORT ?? 4173),
       strictPort: true,
       proxy: {
+        '/auth': `http://127.0.0.1:${env.API_PORT ?? 4174}`,
         '/health': `http://127.0.0.1:${env.API_PORT ?? 4174}`,
       },
     },
