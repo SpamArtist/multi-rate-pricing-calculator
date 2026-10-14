@@ -1,19 +1,19 @@
 const initialDocs = [
-  { id: 'PD-1048', customer: 'Alpen Studio', date: '2026-10-14', status: 'draft', lines: [
+  { id: 'PD-1048', name: 'Alpen Studio', saved: true, customer: 'Alpen Studio', date: '2026-10-14', status: 'draft', lines: [
     { id: 1, name: 'Brand workshop', quantity: 3, price: 1999, discount: 1000, tax: 1900 },
     { id: 2, name: 'Print-ready files', quantity: 2, price: 250, discount: 0, tax: 750 }
   ] },
-  { id: 'PD-1047', customer: 'Northline Coffee', date: '2026-10-11', status: 'finalized', lines: [
+  { id: 'PD-1047', name: 'Northline Coffee', saved: true, customer: 'Northline Coffee', date: '2026-10-11', status: 'finalized', lines: [
     { id: 3, name: 'Menu system', quantity: 1, price: 140000, discount: 10000, tax: 1900 },
     { id: 4, name: 'Seasonal insert', quantity: 2, price: 12500, discount: 0, tax: 1900 }
   ] },
-  { id: 'PD-1046', customer: 'Mira & Co.', date: '2026-10-08', status: 'draft', lines: [
+  { id: 'PD-1046', name: 'Mira & Co.', saved: true, customer: 'Mira & Co.', date: '2026-10-08', status: 'draft', lines: [
     { id: 5, name: 'Consultation', quantity: 4, price: 9500, discount: 0, tax: 1900 }
   ] },
-  { id: 'PD-1045', customer: 'Berg Hotel', date: '2026-09-30', status: 'finalized', lines: [
+  { id: 'PD-1045', name: 'Berg Hotel', saved: true, customer: 'Berg Hotel', date: '2026-09-30', status: 'finalized', lines: [
     { id: 6, name: 'Room photography', quantity: 2, price: 37500, discount: 5000, tax: 1900 }
   ] },
-  { id: 'PD-1044', customer: 'Atelier Form', date: '2026-09-22', status: 'finalized', lines: [
+  { id: 'PD-1044', name: 'Atelier Form', saved: true, customer: 'Atelier Form', date: '2026-09-22', status: 'finalized', lines: [
     { id: 7, name: 'Product catalog', quantity: 1, price: 225000, discount: 25000, tax: 750 }
   ] }
 ];
@@ -68,7 +68,7 @@ const totals = document => document.lines.reduce((sum, line) => {
 }, { subtotal: 0, discount: 0, taxable: 0, tax: 0, total: 0 });
 const filteredDocs = () => state.docs.filter(item => {
   const search = state.search.trim().toLocaleLowerCase();
-  return (!search || item.customer.toLocaleLowerCase().includes(search)) &&
+  return item.saved && (!search || item.customer.toLocaleLowerCase().includes(search)) &&
     (state.status === 'all' || item.status === state.status) &&
     (!state.listStart || item.date >= state.listStart) &&
     (!state.listEnd || item.date <= state.listEnd);
@@ -95,7 +95,7 @@ function icon(name) {
   return `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name]}</svg>`;
 }
 
-const badge = status => `<span class="badge ${status}"><span class="badge-dot"></span>${status === 'draft' ? 'Draft' : 'Finalized'}</span>`;
+const badge = (status, saved = true) => `<span class="badge ${status}"><span class="badge-dot"></span>${saved ? status === 'draft' ? 'Draft' : 'Finalized' : 'Unsaved'}</span>`;
 const title = () => `<div class="brand-mark" aria-hidden="true">P<span>.</span></div><strong class="brand-name">Priced</strong>`;
 const navButton = (view, label, glyph) => `<button type="button" data-action="view" data-view="${view}" class="nav-link ${state.view === view ? 'active' : ''}">${icon(glyph)}<span>${label}</span></button>`;
 const newButton = () => `<button type="button" class="button primary" data-action="new">${icon('plus')}<span>New document</span></button>`;
@@ -126,19 +126,19 @@ function report() {
 function documentRows(type = 'list') {
   const found = state.listStart && state.listEnd && state.listStart > state.listEnd ? [] : filteredDocs();
   if (!found.length) return `<div class="empty-list">No documents match these filters. <button type="button" class="text-button" data-action="clear-filters">Clear filters</button></div>`;
-  if (type === 'table') return `<div class="table-scroll"><table class="document-table"><thead><tr><th>Document</th><th>Customer</th><th>Issue date</th><th>Status</th><th class="number">Total</th><th><span class="sr-only">Open</span></th></tr></thead><tbody>${found.map(item => `<tr><td><button type="button" class="table-link" data-action="open" data-id="${item.id}">${item.id}</button></td><td>${safe(item.customer || 'Unnamed customer')}</td><td>${dateLabel(item.date)}</td><td>${badge(item.status)}</td><td class="number">${euros(totals(item).total)}</td><td><button type="button" class="icon-action" data-action="open" data-id="${item.id}" aria-label="Open ${item.id}">${icon('arrow')}</button></td></tr>`).join('')}</tbody></table></div>`;
-  return `<div class="document-list ${type}">${found.map(item => `<button type="button" class="document-entry ${state.currentId === item.id ? 'selected' : ''}" data-action="open" data-id="${item.id}"><span class="entry-top"><strong>${safe(item.customer || 'Unnamed customer')}</strong><span>${euros(totals(item).total)}</span></span><span class="entry-bottom"><span>${item.id} · ${dateLabel(item.date)}</span>${badge(item.status)}</span></button>`).join('')}</div>`;
+  if (type === 'table') return `<div class="table-scroll"><table class="document-table"><thead><tr><th>Document</th><th>Customer</th><th>Issue date</th><th>Status</th><th class="number">Total</th><th><span class="sr-only">Open</span></th></tr></thead><tbody>${found.map(item => `<tr><td><a class="table-link" href="#document=${safe(item.id)}" data-action="open" data-id="${safe(item.id)}" aria-label="Open ${safe(item.id)}">${safe(item.id)}${item.name && item.name !== item.customer ? `<span class="table-document-name">${safe(item.name)}</span>` : ''}</a></td><td>${safe(item.customer || 'Unnamed customer')}</td><td>${dateLabel(item.date)}</td><td>${badge(item.status, item.saved)}</td><td class="number">${euros(totals(item).total)}</td><td><span aria-hidden="true">${icon('arrow')}</span></td></tr>`).join('')}</tbody></table></div>`;
+  return `<div class="document-list ${type}">${found.map(item => `<button type="button" class="document-entry ${state.currentId === item.id ? 'selected' : ''}" data-action="open" data-id="${item.id}"><span class="entry-top"><strong>${safe(item.name || item.customer || 'Untitled document')}</strong><span>${euros(totals(item).total)}</span></span><span class="entry-bottom"><span>${item.id} · ${dateLabel(item.date)}</span>${badge(item.status, item.saved)}</span></button>`).join('')}</div>`;
 }
 
 function editorHeading() {
   const current = doc();
-  return `<div class="editor-heading"><div><span class="section-label">${current.id} · ${current.status === 'draft' ? 'Editable draft' : 'Fixed snapshot'}</span><h1>${safe(current.customer || 'Untitled document')}</h1><p>Issue date ${dateLabel(current.date)}</p></div><div class="editor-actions">${badge(current.status)}<button type="button" class="button secondary" data-action="duplicate">${icon('copy')}<span>Duplicate</span></button><button type="button" class="button secondary" data-action="print">${icon('print')}<span>Print</span></button></div></div>`;
+  return `<div class="editor-heading"><div><span class="section-label">${current.id} · ${!current.saved ? 'Unsaved document' : current.status === 'draft' ? 'Editable draft' : 'Fixed snapshot'}</span><h1>${safe(current.name || 'Untitled document')}</h1><p>Issue date ${dateLabel(current.date)}</p></div><div class="editor-actions">${badge(current.status, current.saved)}${!current.saved ? '<button type="button" class="button secondary" data-action="save-draft">Save as draft</button>' : `<button type="button" class="button secondary" data-action="duplicate">${icon('copy')}<span>Duplicate</span></button>`}<button type="button" class="button secondary" data-action="print">${icon('print')}<span>Print</span></button></div></div>`;
 }
 
 function metadata() {
   const current = doc();
   const disabled = current.status === 'finalized' ? 'disabled' : '';
-  return `<section class="metadata"><div class="section-heading"><h2>Document details</h2><span>01</span></div><div class="metadata-fields"><label>Customer name<input name="customer" value="${safe(current.customer)}" placeholder="Enter customer" ${disabled}></label><label>Issue date<input name="date" type="date" value="${current.date}" ${disabled}></label></div></section>`;
+  return `<section class="metadata"><div class="section-heading"><h2>Document details</h2><span>01</span></div><div class="metadata-fields"><label>Document name<input name="documentName" value="${safe(current.name)}" placeholder="Enter document name" ${disabled}></label><label>Customer name<input name="customer" value="${safe(current.customer)}" placeholder="Enter customer" ${disabled}></label><label>Issue date<input name="date" type="date" value="${current.date}" ${disabled}></label></div></section>`;
 }
 
 function lineItems(style = 'grid') {
@@ -148,8 +148,10 @@ function lineItems(style = 'grid') {
     ${current.lines.map((line, index) => {
       const amount = lineCalc(line);
       const disabled = editable ? '' : 'disabled';
-      return `<article class="line-item"><div class="line-header"><span class="line-index">${String(index + 1).padStart(2, '0')}</span><label class="description"><span class="sr-only">Line description</span><input data-line="${line.id}" name="name" value="${safe(line.name)}" placeholder="Item or service" ${disabled}></label>${editable ? `<button type="button" class="icon-action remove" data-action="remove-line" data-id="${line.id}" aria-label="Remove ${safe(line.name)}">${icon('trash')}</button>` : ''}</div>
+      const remove = editable ? `<button type="button" class="icon-action remove" data-action="remove-line" data-id="${line.id}" aria-label="Remove ${safe(line.name || 'line item')}">${icon('trash')}</button>` : '';
+      return `<article class="line-item"><div class="line-header"><span class="line-index">${String(index + 1).padStart(2, '0')}</span><label class="description"><span class="sr-only">Line description</span><input data-line="${line.id}" name="name" value="${safe(line.name)}" placeholder="Item or service" ${disabled}></label>${style === 'ledger' ? '' : remove}</div>
         <div class="line-fields"><label>Qty<input data-line="${line.id}" name="quantity" type="number" min="1" step="1" value="${line.quantity}" ${disabled}></label><label>Unit price €<input data-line="${line.id}" name="price" type="number" min="0" step="0.01" value="${(line.price / 100).toFixed(2)}" ${disabled}></label><label>Discount €<input data-line="${line.id}" name="discount" type="number" min="0" step="0.01" value="${(line.discount / 100).toFixed(2)}" ${disabled}></label><label>Tax %<input data-line="${line.id}" name="tax" type="number" min="0" max="100" step="0.01" value="${(line.tax / 100).toFixed(2)}" ${disabled}></label><div class="line-sum"><span>Line total</span><strong>${euros(amount.total)}</strong></div></div>
+        ${style === 'ledger' ? remove : ''}
         <p class="line-math">${euros(amount.subtotal)} subtotal − ${euros(amount.discount)} discount = ${euros(amount.taxable)} taxable + ${euros(amount.tax)} tax</p>
       </article>`;
     }).join('')}
@@ -164,7 +166,7 @@ function amountBreakdown(kind = 'panel') {
 
 function dashboardA() {
   const current = doc();
-  return `<div class="a-dashboard"><div class="a-list-pane"><div class="pane-heading"><div><span class="section-label">Workspace</span><h1>Documents</h1></div><span class="count">${state.docs.length}</span></div>${filters(true)}${documentRows('rail')}<div class="rail-foot">25 per page in production · ${filteredDocs().length} shown here</div></div><div class="a-overview"><div class="overview-head"><div><span class="section-label">Selected document</span><h2>${safe(current.customer || 'Untitled document')}</h2><p>${current.id} · ${dateLabel(current.date)}</p></div>${newButton()}</div><div class="a-selected-status">${badge(current.status)}<button type="button" class="button secondary" data-action="open" data-id="${current.id}">Open document ${icon('arrow')}</button></div><div class="a-preview-heading"><h3>Line items</h3><span>${current.lines.length} items</span></div><div class="a-preview-lines">${current.lines.map(line => `<div><span>${safe(line.name || 'Unnamed item')}</span><span>${line.quantity} × ${euros(line.price)}</span><strong>${euros(lineCalc(line).total)}</strong></div>`).join('') || '<p>No line items yet.</p>'}</div><div class="a-preview-total"><span>Document total</span><strong>${euros(totals(current).total)}</strong></div></div><aside class="a-report-pane">${report()}</aside></div>`;
+  return `<div class="a-dashboard"><div class="a-list-pane"><div class="pane-heading"><div><span class="section-label">Workspace</span><h1>Documents</h1></div><span class="count">${state.docs.filter(item => item.saved).length}</span></div>${filters(true)}${documentRows('rail')}<div class="rail-foot">25 per page in production · ${filteredDocs().length} shown here</div></div><div class="a-overview"><div class="overview-head"><div><span class="section-label">Selected document</span><h2>${safe(current.name || 'Untitled document')}</h2><p>${current.id} · ${dateLabel(current.date)}</p></div>${newButton()}</div><div class="a-selected-status">${badge(current.status, current.saved)}<button type="button" class="button secondary" data-action="open" data-id="${current.id}">Open document ${icon('arrow')}</button></div><div class="a-preview-heading"><h3>Line items</h3><span>${current.lines.length} items</span></div><div class="a-preview-lines">${current.lines.map(line => `<div><span>${safe(line.name || 'Unnamed item')}</span><span>${line.quantity} × ${euros(line.price)}</span><strong>${euros(lineCalc(line).total)}</strong></div>`).join('') || '<p>No line items yet.</p>'}</div><div class="a-preview-total"><span>Document total</span><strong>${euros(totals(current).total)}</strong></div></div><aside class="a-report-pane">${report()}</aside></div>`;
 }
 function editorA() {
   return `<div class="a-editor"><aside class="a-document-rail"><div class="rail-title"><span class="section-label">Documents</span><button type="button" class="icon-action" data-action="view" data-view="dashboard" aria-label="Back to dashboard">${icon('back')}</button></div>${documentRows('rail')}</aside><main class="a-editor-main">${editorHeading()}${metadata()}${lineItems()}</main><aside class="a-inspector">${amountBreakdown()}</aside></div>`;
@@ -187,7 +189,7 @@ function dashboardC() {
   return `<div class="c-dashboard"><aside class="c-nav"><div class="brand">${title()}</div><nav aria-label="Main navigation">${navButton('dashboard', 'Documents', 'file')}${navButton('editor', 'Editor', 'chart')}</nav><div class="c-nav-foot">Pricing documents<br><span>Layout C · Document view</span></div></aside><main class="c-main"><div class="c-title"><span class="section-label">Workspace / Documents</span><div class="c-title-line"><h1>Documents</h1>${newButton()}</div></div><div class="c-dashboard-body"><section class="c-list"><h2>Find a document</h2>${filters()}${documentRows('cards')}<p class="pagination-note">${filteredDocs().length} shown · 25 per page in production</p></section><aside>${report()}</aside></div></main></div>`;
 }
 function editorC() {
-  return `<div class="c-dashboard"><aside class="c-nav"><div class="brand">${title()}</div><nav aria-label="Main navigation">${navButton('dashboard', 'Documents', 'file')}${navButton('editor', 'Editor', 'chart')}</nav><div class="c-nav-foot">Pricing documents<br><span>Layout C · Document view</span></div></aside><main class="c-main c-editor-main"><button type="button" class="back-link" data-action="view" data-view="dashboard">${icon('back')} All documents</button><div class="c-editor-layout"><article class="document-page">${editorHeading()}${metadata()}${lineItems('page-lines')}<div class="page-total">${amountBreakdown('page')}</div></article><aside class="c-context"><div class="context-sticky"><span class="section-label">Current document</span><h2>${safe(doc().id)}</h2>${badge(doc().status)}<p>${doc().status === 'draft' ? 'Edit the document on the page. Totals update as you type.' : 'This document is fixed. Duplicate it to begin a new draft.'}</p><div class="context-actions"><button type="button" class="button secondary" data-action="duplicate">${icon('copy')} Duplicate</button><button type="button" class="button secondary" data-action="print">${icon('print')} Print</button></div><div class="context-total"><span>Total</span><strong>${euros(totals(doc()).total)}</strong></div></div></aside></div></main></div>`;
+  return `<div class="c-dashboard"><aside class="c-nav"><div class="brand">${title()}</div><nav aria-label="Main navigation">${navButton('dashboard', 'Documents', 'file')}${navButton('editor', 'Editor', 'chart')}</nav><div class="c-nav-foot">Pricing documents<br><span>Layout C · Document view</span></div></aside><main class="c-main c-editor-main"><button type="button" class="back-link" data-action="view" data-view="dashboard">${icon('back')} All documents</button><div class="c-editor-layout"><article class="document-page">${editorHeading()}${metadata()}${lineItems('page-lines')}<div class="page-total">${amountBreakdown('page')}</div></article><aside class="c-context"><div class="context-sticky"><span class="section-label">Current document</span><h2>${safe(doc().id)}</h2>${badge(doc().status, doc().saved)}<p>${doc().status === 'draft' ? 'Edit the document on the page. Totals update as you type.' : 'This document is fixed. Duplicate it to begin a new draft.'}</p><div class="context-actions">${doc().saved ? `<button type="button" class="button secondary" data-action="duplicate">${icon('copy')} Duplicate</button>` : '<button type="button" class="button secondary" data-action="save-draft">Save as draft</button>'}<button type="button" class="button secondary" data-action="print">${icon('print')} Print</button></div><div class="context-total"><span>Total</span><strong>${euros(totals(doc()).total)}</strong></div></div></aside></div></main></div>`;
 }
 function renderC() { return `<div class="shell variant-c">${notice()}${state.view === 'dashboard' ? dashboardC() : editorC()}</div>`; }
 
@@ -235,27 +237,33 @@ app.addEventListener('click', event => {
   if (action === 'toggle-summary') state.summaryOpen = !state.summaryOpen;
   if (action === 'new') {
     const id = `PD-${state.nextId++}`;
-    state.docs.unshift({ id, customer: '', date: localToday(), status: 'draft', lines: [] });
+    state.docs.unshift({ id, name: '', saved: false, customer: '', date: localToday(), status: 'draft', lines: [] });
     state.currentId = id; state.view = 'editor';
     if (location.hash) history.replaceState(null, '', `${location.pathname}${location.search}`);
   }
   if (action === 'duplicate') {
     const source = doc();
+    if (!source.saved) return;
     const copy = structuredClone(source);
     copy.id = `PD-${state.nextId++}`;
     copy.status = 'draft';
+    copy.saved = true;
     copy.date = localToday();
     copy.lines.forEach(line => { line.id = state.nextLineId++; });
     state.docs.unshift(copy);
     state.notice = `Created editable draft ${copy.id} from ${source.id}.`;
     state.noticeTargetId = copy.id;
   }
+  if (action === 'save-draft') {
+    doc().saved = true;
+    state.notice = `${doc().id} saved as draft.`;
+  }
   if (action === 'add-line') doc().lines.push({ id: state.nextLineId++, name: '', quantity: 1, price: 0, discount: 0, tax: 0 });
   if (action === 'remove-line') doc().lines = doc().lines.filter(line => String(line.id) !== control.dataset.id);
   if (action === 'finalize') {
     const current = doc();
     if (!current.customer.trim() || !current.date || !current.lines.length || current.lines.some(line => !line.name.trim())) state.notice = 'Add a customer, issue date, and named line item before finalizing.';
-    else { current.status = 'finalized'; state.notice = `${current.id} finalized. Its details are now fixed.`; }
+    else { current.status = 'finalized'; current.saved = true; state.notice = `${current.id} finalized. Its details are now fixed.`; }
   }
   if (action === 'clear-filters') { state.search = ''; state.status = 'all'; state.listStart = ''; state.listEnd = ''; }
   if (action === 'print') { window.print(); return; }
@@ -288,15 +296,25 @@ app.addEventListener('input', event => {
     if (focus.name === 'name') next?.setSelectionRange(focus.start, focus.start);
     return;
   }
+  if (target.name === 'documentName') {
+    doc().name = target.value;
+    app.querySelector('.editor-heading h1').textContent = target.value || 'Untitled document';
+  }
   if (target.name === 'customer') doc().customer = target.value;
-  if (target.name === 'date') doc().date = target.value;
+  if (target.name === 'date') {
+    doc().date = target.value;
+    app.querySelector('.editor-heading p').textContent = `Issue date ${dateLabel(target.value)}`;
+  }
   if (['reportStart', 'reportEnd', 'listStart', 'listEnd'].includes(target.name)) { state[target.name] = target.value; render(); }
 });
 
 app.addEventListener('change', event => {
   const target = event.target;
   if (['status', 'sort'].includes(target.name)) { state[target.name] = target.value; render(); }
-  if (['customer', 'date'].includes(target.name)) render();
+  if (target.name === 'date') {
+    doc().date = target.value;
+    app.querySelector('.editor-heading p').textContent = `Issue date ${dateLabel(target.value)}`;
+  }
 });
 
 render();

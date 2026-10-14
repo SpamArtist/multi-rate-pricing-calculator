@@ -6,4 +6,4 @@ Throwaway layout study for [Dashboard and editor prototype](https://github.com/S
 - **B · Ledger:** wide dashboard table, report in a collapsible right sidebar, compact row editor.
 - **C · Document view:** quiet document list and page-like editor with contextual controls.
 
-Sample data and changes live only in memory. Variant switches preserve current sample state. Reload resets it. Duplicating a document shows a link to open the new draft in the current session. The design decision belongs in the issue, not this code.
+Sample data and changes live only in memory. Variant switches preserve current sample state. Reload resets it. New documents stay unsaved until saved as a draft or finalized; only saved documents appear in the dashboard and can be duplicated. Document names can be edited before finalization. Duplicating a document shows a link to open the new draft in the current session. The design decision belongs in the issue, not this code.

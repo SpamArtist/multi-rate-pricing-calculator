@@ -86,6 +86,11 @@ svg { display: block; flex: none; }
 .document-table td { padding: 0.93rem 0.8rem; border-block-end: 1px solid var(--line); vertical-align: middle; }
 .document-table .number { text-align: end; font-variant-numeric: tabular-nums; font-weight: 660; white-space: nowrap; }
 .document-table td:first-child { font-weight: 675; }
+.document-table tbody tr { position: relative; cursor: pointer; }
+.document-table .table-link { text-decoration: none; }
+.document-table .table-link::after { content: ''; position: absolute; inset: 0; }
+.document-table .table-link:focus-visible::after { outline: 2px solid var(--primary); outline-offset: -2px; }
+.table-document-name { display: block; margin-block-start: 0.15rem; color: var(--muted); font-size: 0.76rem; font-weight: 500; }
 .table-scroll { overflow-x: auto; }
 .pagination-note { margin-block-start: 1rem; color: var(--muted); font-size: 0.81rem; }
 
@@ -189,9 +194,10 @@ input:disabled { background: var(--surface); color: var(--ink); opacity: 1; }
 .b-editor .editor-heading { margin-block-end: 1.2rem; padding-block-end: 1rem; }
 .b-editor .metadata { padding-block: 0 1rem; }
 .b-editor .line-section { margin-block-start: 0; padding-block: 1rem; }
-.b-editor .line-item { display: grid; grid-template-columns: minmax(12rem, 1.15fr) minmax(0, 4fr); align-items: center; gap: 0.35rem 1rem; padding: 0.7rem 0; border: 0; border-radius: 0; border-block-end: 1px solid var(--line); margin: 0; }
+.b-editor .line-item { display: grid; grid-template-columns: minmax(12rem, 1.15fr) minmax(0, 4fr) auto; align-items: center; gap: 0.35rem 0.7rem; padding: 0.7rem 0; border: 0; border-radius: 0; border-block-end: 1px solid var(--line); margin: 0; }
 .b-editor .line-header { margin: 0; }
-.b-editor .line-fields { grid-template-columns: minmax(4rem, 0.55fr) repeat(3, minmax(5.5rem, 1fr)) minmax(6.5rem, 0.9fr); gap: 0.5rem; }
+.b-editor .line-fields { grid-column: 2; grid-template-columns: minmax(4rem, 0.55fr) repeat(3, minmax(5.5rem, 1fr)) minmax(6.5rem, 0.9fr); gap: 0.5rem; }
+.b-editor .line-item > .remove { grid-column: 3; grid-row: 1; justify-self: end; }
 .b-editor .line-math { grid-column: 2; margin-block-start: 0; }
 .b-editor .breakdown.band { display: grid; grid-template-columns: minmax(0, 1fr) minmax(15rem, 18rem); align-items: end; gap: 0.55rem 2rem; max-inline-size: none; margin-inline-start: 0; border-block-start: 1px solid var(--ink); }
 .b-editor .breakdown.band .section-heading { grid-column: 1 / -1; margin-block-end: 0.25rem; }
@@ -272,9 +278,11 @@ button:active { transform: scale(0.97); }
 @media (max-width: 900px) {
   .b-dashboard-shell.summary-open { display: flex; flex-direction: column; }
   .b-summary-sidebar { order: -1; min-block-size: 0; border-inline-start: 0; border-block-end: 1px solid var(--line); }
-  .b-editor .line-item { display: block; }
-  .b-editor .line-header { margin-block-end: 0.7rem; }
-  .b-editor .line-math { margin-block-start: 0.55rem; }
+  .b-editor .line-item { grid-template-columns: minmax(0, 1fr) auto; }
+  .b-editor .line-header { grid-column: 1; margin-block-end: 0.7rem; }
+  .b-editor .line-fields { grid-column: 1 / -1; grid-row: 2; }
+  .b-editor .line-item > .remove { grid-column: 2; grid-row: 1; }
+  .b-editor .line-math { grid-column: 1 / -1; grid-row: 3; margin-block-start: 0.55rem; }
   .b-editor .breakdown.band { display: block; }
   .b-editor .breakdown.band .amount-list { display: flex; }
   .b-editor .breakdown.band .amount-list > div { flex-direction: row; }
@@ -316,6 +324,7 @@ button:active { transform: scale(0.97); }
   .b-dashboard .filters .date-filter { flex-direction: column; align-items: stretch; gap: 0.2rem; }
   .line-fields, .b-editor .line-fields, .document-page .line-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .line-sum { align-items: start; min-block-size: auto; }
+  .b-editor .line-sum { grid-column: 1 / -1; align-items: end; text-align: end; }
   .document-page .editor-heading h1 { font-size: 1.7rem; }
   .c-title-line { align-items: start; flex-wrap: wrap; }
   .filters .date-filter { flex: 1 1 7rem; }
