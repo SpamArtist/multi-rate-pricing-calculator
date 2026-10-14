@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createServer } from 'node:http';
-import { pool } from '../../src/db/client.js';
+import { closeDatabase } from '../../src/db/client.js';
 import { createApp } from '../../src/server/app.js';
 import { TestClock } from '../support/test-clock.js';
 
@@ -19,7 +19,7 @@ describe('GET /health', () => {
 
   afterAll(async () => {
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
-    await pool.end();
+    await closeDatabase();
   });
 
   it('checks the runtime database role and returns deterministic health time', async () => {

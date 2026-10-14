@@ -1,6 +1,6 @@
 # Production check scaffold
 
-This repository keeps the approved in-memory design prototype separate from the production seams. Production checks use a TypeScript API, React app, Drizzle migrations, and real PostgreSQL. They establish health, role, tenant isolation, and browser smoke checks; document lifecycle and auth behavior arrive in later slices.
+This repository keeps the approved in-memory design prototype separate from the production seams. Production checks use a TypeScript API, React app, Drizzle migrations, and real PostgreSQL. They establish health, role separation, tenant isolation, and browser smoke checks; document lifecycle and auth behavior arrive in later slices.
 
 ## One-command local setup
 
@@ -36,23 +36,22 @@ npm run dev
 
 ## Roles and test isolation
 
-Compose bootstraps separate `pricing_migrator` and `pricing_runtime` logins. Drizzle migrations run as `pricing_migrator`, which owns the schema. The API and tests connect as `pricing_runtime`, a `NOSUPERUSER NOBYPASSRLS` role that does not own tenant tables. The first migration applies row-level security to the production-check `documents` table; runtime queries set `app.user_id` locally inside one transaction. Missing identity returns no tenant rows and cannot insert.
+Compose bootstraps separate `pricing_migrator` and `pricing_runtime` logins. Drizzle migrations run as `pricing_migrator`, which owns tenant tables. The API and tests connect as `pricing_runtime`, a `NOSUPERUSER NOBYPASSRLS` role that cannot create objects in `public` or own tenant tables. It has narrow user/session grants and tenant-table grants without owner-reassignment or truncate privileges.
 
-Database fixtures use fresh UUID owner identities, transaction-local identity, and cleanup in `finally`. `createApiSession()` creates a fresh cookie jar per test user; its helper check verifies cookie state stays separate. API app construction accepts an injected clock, and `TestClock` freezes or advances time without changing host time. Health tests pin an instant at an October month boundary and advance by 24 hours. Later expiry/report tests can reuse this clock and per-user fixtures instead of changing machine time or sharing sessions.
+`users`, `sessions`, `documents`, and `line_items` use UUID keys. Documents reference their owner; line items reference documents with cascade deletion. PostgreSQL checks required fields, draft/finalized snapshot completeness, nonnegative safe-range finalized amounts, quantity/price/discount/tax bounds, and unique positive line positions. Money and quantity use PostgreSQL `bigint`; Drizzle reads them as JavaScript `bigint` so conversion to API JSON numbers must be explicit and safe.
+
+`withTenantTransaction(authenticatedOwnerId, operation)` opens one Drizzle transaction, binds `app.user_id` with parameterized `set_config(..., true)`, then gives the same transaction to tenant repositories. The database pool stays private to the DB module. Documents have owner policies with `USING` and `WITH CHECK`; line policies resolve both checks through the parent document. Missing identity returns no rows and cannot write. The setting protects trusted application queries from omitted tenant filters; it does not protect against arbitrary SQL execution.
+
+Real-Postgres DB checks create fresh UUID owners with the migration role and run tenant operations as `pricing_runtime`. They verify owner/role attributes, document and line isolation for read/insert/update/delete, line reparent denial, missing identity, rollback, foreign-key cascade, storage defaults/checks, and sequential A→B→A reuse on one pooled connection. Assertions inspect database effects, not policy text. `createApiSession()` creates a fresh cookie jar per test user; its helper check verifies cookie state stays separate. API app construction accepts an injected clock, and `TestClock` freezes or advances time without changing host time.
 
 Playwright launches API and React together through `npm run dev`, uses semantic roles and visible status text, and creates separate browser contexts for user sessions. It does not use the prototype as its result source.
 
 ## Latest local verification
 
-Verified 2026-10-14 after removing the local Podman container and data volume, so setup started from empty PostgreSQL:
+Verified 2026-10-14 after applying migrations and running production check commands against local PostgreSQL:
 
-- `npm run setup:local` — exit 0. Installed dependencies (0 audit findings), started PostgreSQL, applied migrations as `pricing_migrator`, and ran full check graph.
-- `npm run typecheck` — exit 0.
-- `npm run lint` — exit 0.
-- `npm run check:api` — 2 files, 3 tests passed.
-- `npm run check:db` — 1 file, 1 test passed as `pricing_runtime`.
-- `npm run check:ui` — 1 Playwright Chromium test passed.
+- `npm run db:migrate` on a fresh temporary PostgreSQL database — exit 0; migrations applied as `pricing_migrator`.
+- `npm run check` — exit 0: typecheck and lint passed; API 2 files / 3 tests passed; DB 1 file / 7 tests passed as `pricing_runtime`; UI 1 Playwright test passed.
+- `npm run check:db` on the fresh temporary database — 1 file / 7 tests passed.
 - `npm run build` — exit 0; Vite built React and esbuild produced API bundle.
-- `npm start` smoke — `/health` HTTP 200 and `/` HTTP 200.
-- `npm audit` — 0 vulnerabilities.
-- Failure injection — temporary failing assertion made `npm run check` exit 1 (1 failed, 3 passed); temporary test removed. CI runs the same check graph through `npm run check:local`, so assertion failures propagate to the workflow.
+- `git diff --check` — exit 0.
