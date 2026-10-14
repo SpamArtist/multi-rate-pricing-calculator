@@ -21,6 +21,7 @@
     "setup:local": "sh scripts/setup-local.sh"
   },
   "dependencies": {
+    "argon2": "^0.45.1",
     "drizzle-orm": "^0.45.4",
     "express": "^5.1.0",
     "pg": "^8.16.3",

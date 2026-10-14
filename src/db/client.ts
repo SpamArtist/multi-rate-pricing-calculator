@@ -8,7 +8,7 @@ const connectionString = process.env.DATABASE_URL
   ?? 'postgres://pricing_runtime:pricing_runtime@127.0.0.1:5432/pricing';
 const pool = new Pool({ connectionString });
 const schema = { users, sessions, documents, lineItems };
-const db = drizzle(pool, { schema });
+export const db = drizzle(pool, { schema });
 
 export type AuthenticatedOwnerId = string & { readonly __authenticatedOwnerId: true };
 export type TenantTransaction = NodePgTransaction<typeof schema, ExtractTablesWithRelations<typeof schema>>;
