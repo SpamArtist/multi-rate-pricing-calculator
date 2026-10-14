@@ -311,6 +311,90 @@ test('duplicates a saved draft while source stays open and copy stays editable',
   }
 });
 
+test('deletes an owned draft with its lines and hides deletion for finalized documents', async ({ page }) => {
+  const email = `delete-draft-ui-${randomUUID()}@example.com`;
+  const password = 'A🔐b$cD';
+  try {
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Create account' }).click();
+    await page.getByLabel('Email address').fill(email);
+    await page.getByLabel('Password').fill(password);
+    await page.getByRole('button', { name: 'Create account' }).click();
+    await expect(page.getByRole('heading', { name: 'Documents', exact: true })).toBeVisible();
+
+    await page.getByRole('button', { name: 'New document' }).click();
+    await page.getByLabel('Document name').fill('Unwanted draft');
+    await page.getByRole('button', { name: 'Add line item' }).click();
+    const draftLine = page.getByTestId('line-item').first();
+    await draftLine.getByLabel('Line description').fill('Draft line');
+    await draftLine.getByLabel('Unit price €').fill('10.00');
+    await page.getByRole('button', { name: 'Save as draft' }).click();
+    await expect(page).toHaveURL(/#\/documents\/[0-9a-f-]+$/i);
+    await expect(page.getByRole('heading', { name: 'Unwanted draft' })).toBeVisible();
+
+    const draftId = decodeURIComponent(new URL(page.url()).hash.split('/').at(-1)!);
+    const draftResponse = await page.context().request.get(new URL(`/documents/${draftId}`, page.url()).toString());
+    expect(draftResponse.status()).toBe(200);
+    const draft = await draftResponse.json() as { id: string; status: string; lineItems: Array<{ id: string }> };
+    expect(draft).toMatchObject({ id: draftId, status: 'draft', lineItems: [expect.objectContaining({ id: expect.any(String) })] });
+    const deleteButton = page.getByRole('button', { name: 'Delete draft' });
+    await expect(deleteButton).toBeVisible();
+
+    const canceledDialog = page.waitForEvent('dialog').then(async dialog => {
+      expect(dialog.type()).toBe('confirm');
+      expect(dialog.message()).toBe('Delete this draft and all its lines permanently?');
+      await dialog.dismiss();
+    });
+    await deleteButton.click();
+    await canceledDialog;
+    expect((await page.context().request.get(new URL(`/documents/${draftId}`, page.url()).toString())).status()).toBe(200);
+
+    const deleteResponsePromise = page.waitForResponse(response =>
+      response.url().endsWith(`/documents/${draftId}`) && response.request().method() === 'DELETE');
+    const acceptedDialog = page.waitForEvent('dialog').then(async dialog => {
+      expect(dialog.type()).toBe('confirm');
+      await dialog.accept();
+    });
+    await deleteButton.click();
+    await acceptedDialog;
+    expect((await deleteResponsePromise).status()).toBe(204);
+    await expect(page).toHaveURL(/#\/documents$/);
+    await expect(page.getByText('0 documents')).toBeVisible();
+    const gone = await page.context().request.get(new URL(`/documents/${draftId}`, page.url()).toString());
+    expect(gone.status()).toBe(404);
+    const list = await page.context().request.get(new URL('/documents', page.url()).toString());
+    const listAfterDelete = await list.json() as { items: unknown[] };
+    expect(listAfterDelete.items).toEqual([]);
+
+    await page.getByRole('button', { name: 'New document' }).click();
+    await page.getByLabel('Document name').fill('Fixed document');
+    await page.getByLabel('Customer name').fill('Customer');
+    await page.getByRole('button', { name: 'Add line item' }).click();
+    const finalLine = page.getByTestId('line-item').first();
+    await finalLine.getByLabel('Line description').fill('Fixed line');
+    await finalLine.getByLabel('Unit price €').fill('10.00');
+    await page.getByRole('button', { name: 'Save as draft' }).click();
+    await expect(page).toHaveURL(/#\/documents\/[0-9a-f-]+$/i);
+    await expect(page.getByRole('button', { name: 'Save changes' })).toBeVisible();
+    await page.getByRole('button', { name: 'Finalize document' }).click();
+    await expect(page.getByRole('status')).toHaveText('Document finalized. This snapshot cannot be changed.');
+    await expect(page.getByRole('button', { name: 'Delete draft' })).toHaveCount(0);
+
+    await test.info().attach('issue-19-deleted-draft.json', {
+      body: JSON.stringify({
+        draftBeforeDelete: draft,
+        deleteStatus: 204,
+        detailStatusAfterDelete: gone.status,
+        listAfterDelete,
+        finalizedDeleteControlCount: await page.getByRole('button', { name: 'Delete draft' }).count(),
+      }, null, 2),
+      contentType: 'application/json',
+    });
+  } finally {
+    await migrationPool.query('DELETE FROM users WHERE email_canonical = $1', [email.toLowerCase()]);
+  }
+});
+
 test('adds priced line items, previews exact arithmetic, and reloads server totals', async ({ page }) => {
   const email = `line-pricing-${randomUUID()}@example.com`;
   const password = 'A🔐b$cD';

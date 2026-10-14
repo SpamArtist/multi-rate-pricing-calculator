@@ -1143,6 +1143,36 @@ function DocumentEditor({
     }
   }
 
+  async function deleteDraft(): Promise<void> {
+    if (!documentId || !document || document.status !== 'draft' || pending) return;
+    if (!window.confirm('Delete this draft and all its lines permanently?')) return;
+
+    setPending(true);
+    setMessage('');
+    try {
+      const response = await fetch(`/documents/${encodeURIComponent(documentId)}`, { method: 'DELETE' });
+      if (response.status === 401) {
+        onAuthExpired();
+        return;
+      }
+      if (response.status === 404 || response.status === 409) {
+        navigate('/documents');
+        return;
+      }
+      if (!response.ok) {
+        const error = await responseError(response);
+        setMessage(error.message ?? 'Could not delete this draft. Try again.');
+        return;
+      }
+      clearEditorValues(owner.id, documentId);
+      navigate('/documents');
+    } catch {
+      setMessage('Connection failed. Draft stays saved. Try again.');
+    } finally {
+      setPending(false);
+    }
+  }
+
   const amounts = document?.status === 'finalized'
     ? document.amounts
     : previewAmounts;
@@ -1176,6 +1206,12 @@ function DocumentEditor({
               disabled={pending}
               onClick={() => void duplicateDocument()}
             >{pending ? 'Working…' : 'Duplicate'}</button>}
+            {document?.status === 'draft' && <button
+              className="secondary-button danger-button"
+              type="button"
+              disabled={pending}
+              onClick={() => void deleteDraft()}
+            >{pending ? 'Deleting…' : 'Delete draft'}</button>}
             <button className="secondary-button print-button" type="button" onClick={() => window.print()}>Print</button>
           </div>
         </header>

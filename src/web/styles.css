@@ -215,6 +215,11 @@ button {
   color: var(--ink);
 }
 
+.danger-button {
+  border-color: color-mix(in oklch, var(--danger) 42%, var(--line));
+  color: var(--danger);
+}
+
 .text-button,
 .auth-switch {
   min-block-size: auto;
@@ -729,6 +734,11 @@ button:active:not(:disabled) {
 
   .secondary-button:hover:not(:disabled) {
     background: var(--page);
+  }
+
+  .danger-button:hover:not(:disabled) {
+    border-color: var(--danger);
+    background: color-mix(in oklch, var(--danger) 8%, var(--surface));
   }
 
   .text-button:hover,
