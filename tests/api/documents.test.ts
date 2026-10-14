@@ -46,6 +46,29 @@ function jsonRequest(method: string, body?: unknown): RequestInit {
   };
 }
 
+async function createDraft(
+  client: ReturnType<typeof createApiSession>,
+  input: { title: string; customerName?: string; issueDate: string },
+): Promise<{ id: string }> {
+  const response = await client.fetch(`${baseUrl}/documents`, jsonRequest('POST', input));
+  expect(response.status).toBe(201);
+  return await response.json() as { id: string };
+}
+
+async function addLine(
+  client: ReturnType<typeof createApiSession>,
+  documentId: string,
+  input: { description: string; quantity: number; unitPriceCents: number; discountCents?: number; taxRateBasisPoints?: number },
+): Promise<void> {
+  const response = await client.fetch(`${baseUrl}/documents/${documentId}/line-items`, jsonRequest('POST', input));
+  expect(response.status).toBe(201);
+}
+
+async function finalizeDocument(client: ReturnType<typeof createApiSession>, documentId: string): Promise<void> {
+  const response = await client.fetch(`${baseUrl}/documents/${documentId}/finalize`, jsonRequest('POST', {}));
+  expect(response.status).toBe(200);
+}
+
 describe('document drafts', () => {
   beforeAll(async () => { baseUrl = await listen(); });
 
@@ -125,6 +148,126 @@ describe('document drafts', () => {
       totalItems: 1,
       totalPages: 1,
     });
+  });
+
+  it('searches customers, combines status and inclusive date filters, and returns current amounts', async () => {
+    const { client } = await signedInClient('documents-list-filters@example.com');
+    const draft = await createDraft(client, { title: 'Current draft', customerName: 'Acme Studio', issueDate: '2026-10-14' });
+    await addLine(client, draft.id, { description: 'Design work', quantity: 2, unitPriceCents: 2500, discountCents: 500, taxRateBasisPoints: 1000 });
+    const finalized = await createDraft(client, { title: 'Fixed snapshot', customerName: 'North ACME', issueDate: '2026-10-15' });
+    await addLine(client, finalized.id, { description: 'Build', quantity: 2, unitPriceCents: 999, discountCents: 100, taxRateBasisPoints: 1000 });
+    await finalizeDocument(client, finalized.id);
+    await createDraft(client, { title: 'Older Acme', customerName: 'Acme Archive', issueDate: '2026-10-01' });
+    await createDraft(client, { title: 'Other customer', customerName: 'Beta Works', issueDate: '2026-10-15' });
+
+    const defaultResponse = await client.fetch(`${baseUrl}/documents`);
+    expect(defaultResponse.status).toBe(200);
+    const defaults = await defaultResponse.json() as { items: Array<{ title: string; issueDate: string }>; page: number; pageSize: number; totalItems: number; totalPages: number };
+    expect(defaults).toMatchObject({ page: 1, pageSize: 25, totalItems: 4, totalPages: 1 });
+    expect(defaults.items.map(item => item.issueDate)).toEqual(['2026-10-15', '2026-10-15', '2026-10-14', '2026-10-01']);
+    expect(defaults.items.slice(0, 2).map(item => item.title).sort()).toEqual(['Fixed snapshot', 'Other customer']);
+
+    const allStatusResponse = await client.fetch(`${baseUrl}/documents?status=all`);
+    expect(allStatusResponse.status).toBe(200);
+    expect((await allStatusResponse.json() as { totalItems: number }).totalItems).toBe(4);
+    const draftsResponse = await client.fetch(`${baseUrl}/documents?status=draft`);
+    expect(draftsResponse.status).toBe(200);
+    expect((await draftsResponse.json() as { items: Array<{ title: string }> }).items.map(item => item.title).sort())
+      .toEqual(['Current draft', 'Older Acme', 'Other customer']);
+
+    const search = await client.fetch(`${baseUrl}/documents?search=${encodeURIComponent('  acME  ')}`);
+    expect(search.status).toBe(200);
+    const searched = await search.json() as { items: Array<{ title: string; amounts: { totalCents: number }; lineItems?: unknown }> };
+    expect(searched.items.map(item => item.title)).toEqual(['Fixed snapshot', 'Current draft', 'Older Acme']);
+    expect(searched.items[0]).toMatchObject({ title: 'Fixed snapshot', amounts: { totalCents: 2088 } });
+    expect(searched.items[1]).toMatchObject({
+      title: 'Current draft',
+      amounts: { subtotalCents: 5000, discountCents: 500, taxableCents: 4500, taxCents: 450, totalCents: 4950 },
+    });
+    expect(searched.items.every(item => !Object.hasOwn(item, 'lineItems'))).toBe(true);
+
+    const startOnly = await client.fetch(`${baseUrl}/documents?issueDateStart=2026-10-15`);
+    expect(startOnly.status).toBe(200);
+    const fromDate = await startOnly.json() as { items: Array<{ title: string }> };
+    expect(fromDate.items.map(item => item.title).sort()).toEqual(['Fixed snapshot', 'Other customer']);
+    const endOnly = await client.fetch(`${baseUrl}/documents?issueDateEnd=2026-10-14`);
+    expect(endOnly.status).toBe(200);
+    expect((await endOnly.json() as { items: Array<{ title: string }> }).items.map(item => item.title))
+      .toEqual(['Current draft', 'Older Acme']);
+
+    const combined = await client.fetch(`${baseUrl}/documents?search=acme&status=finalized&issueDateStart=2026-10-14&issueDateEnd=2026-10-15`);
+    expect(combined.status).toBe(200);
+    const filtered = await combined.json() as { items: Array<{ id: string; amounts: { subtotalCents: number; discountCents: number; taxableCents: number; taxCents: number; totalCents: number } }>; totalItems: number };
+    expect(filtered.totalItems).toBe(1);
+    expect(filtered.items).toEqual([expect.objectContaining({
+      id: finalized.id,
+      amounts: { subtotalCents: 1998, discountCents: 100, taxableCents: 1898, taxCents: 190, totalCents: 2088 },
+    })]);
+  });
+
+  it('sorts issue dates in either direction with ascending ID ties', async () => {
+    const { client } = await signedInClient('documents-list-sort@example.com');
+    await createDraft(client, { title: 'Tie first', issueDate: '2026-10-14' });
+    await createDraft(client, { title: 'Later date', issueDate: '2026-10-15' });
+    await createDraft(client, { title: 'Tie second', issueDate: '2026-10-14' });
+    await createDraft(client, { title: 'Earlier date', issueDate: '2026-10-13' });
+
+    for (const sort of ['desc', 'asc']) {
+      const response = await client.fetch(`${baseUrl}/documents?sort=${sort}`);
+      expect(response.status).toBe(200);
+      const result = await response.json() as { items: Array<{ id: string; issueDate: string }> };
+      const dates = result.items.map(item => item.issueDate);
+      expect(dates).toEqual(sort === 'desc' ? [...dates].sort().reverse() : [...dates].sort());
+      const tiedIds = result.items.filter(item => item.issueDate === '2026-10-14').map(item => item.id);
+      expect(tiedIds).toEqual([...tiedIds].sort());
+    }
+  });
+
+  it('paginates 26 matches and keeps accurate metadata beyond the last page', async () => {
+    const { client } = await signedInClient('documents-list-pages@example.com');
+    for (let day = 1; day <= 26; day += 1) {
+      await createDraft(client, {
+        title: `Acme ${day}`,
+        customerName: 'Acme Studio',
+        issueDate: `2026-08-${String(day).padStart(2, '0')}`,
+      });
+    }
+
+    const firstResponse = await client.fetch(`${baseUrl}/documents?search=acme`);
+    expect(firstResponse.status).toBe(200);
+    const first = await firstResponse.json() as { items: Array<{ id: string }>; page: number; pageSize: number; totalItems: number; totalPages: number };
+    expect(first).toMatchObject({ page: 1, pageSize: 25, totalItems: 26, totalPages: 2 });
+    expect(first.items).toHaveLength(25);
+
+    const secondResponse = await client.fetch(`${baseUrl}/documents?search=acme&page=2`);
+    const second = await secondResponse.json() as { items: Array<{ id: string }>; page: number; pageSize: number; totalItems: number; totalPages: number };
+    expect(second).toMatchObject({ page: 2, pageSize: 25, totalItems: 26, totalPages: 2 });
+    expect(second.items).toHaveLength(1);
+
+    const beyondResponse = await client.fetch(`${baseUrl}/documents?search=acme&page=3`);
+    const beyond = await beyondResponse.json() as { items: unknown[]; page: number; pageSize: number; totalItems: number; totalPages: number };
+    expect(beyond).toEqual({ items: [], page: 3, pageSize: 25, totalItems: 26, totalPages: 2 });
+  });
+
+  it('rejects unknown, repeated, malformed, and reversed list query values', async () => {
+    const { client } = await signedInClient('documents-list-invalid@example.com');
+    for (const { query, field } of [
+      { query: '?extra=1', field: 'extra' },
+      { query: '?search=Acme&search=Beta', field: 'search' },
+      { query: '?status=complete', field: 'status' },
+      { query: '?issueDateStart=2026-02-30', field: 'issueDateStart' },
+      { query: '?issueDateEnd=', field: 'issueDateEnd' },
+      { query: '?issueDateStart=2026-10-15&issueDateEnd=2026-10-14', field: 'issueDateEnd' },
+      { query: '?sort=newest', field: 'sort' },
+      { query: '?page=0', field: 'page' },
+      { query: '?page=1.5', field: 'page' },
+      { query: '?page=9007199254740992', field: 'page' },
+    ]) {
+      const response = await client.fetch(`${baseUrl}/documents${query}`);
+      expect(response.status).toBe(422);
+      expect((await response.json() as { error: { fields: Record<string, string> } }).error.fields)
+        .toHaveProperty(field);
+    }
   });
 
   it('patches only supplied metadata, trims text, and preserves omission', async () => {

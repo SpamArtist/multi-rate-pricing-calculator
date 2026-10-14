@@ -1,4 +1,4 @@
-import { asc, desc, eq, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, ilike, lte, sql } from 'drizzle-orm';
 import { json, Router, type Request, type RequestHandler } from 'express';
 import { authenticatedOwnerId } from './auth.js';
 import { documents, lineItems } from '../db/schema.js';
@@ -32,8 +32,99 @@ function requestOwnerId(request: Request): AuthenticatedOwnerId {
   return (request as Request & { authenticatedOwnerId?: AuthenticatedOwnerId }).authenticatedOwnerId!;
 }
 
+const DOCUMENT_PAGE_SIZE = 25;
+const DOCUMENT_LIST_QUERY_FIELDS = ['search', 'status', 'issueDateStart', 'issueDateEnd', 'sort', 'page'] as const;
+
+function parseDocumentListQuery(request: Request): { fields: Fields; values?: DocumentListQuery } {
+  const fields = Object.create(null) as Fields;
+  const params = new URL(request.originalUrl, 'http://localhost').searchParams;
+
+  for (const name of new Set(params.keys())) {
+    if (!DOCUMENT_LIST_QUERY_FIELDS.includes(name as typeof DOCUMENT_LIST_QUERY_FIELDS[number])) {
+      fields[name] = 'This query parameter is not allowed.';
+    } else if (params.getAll(name).length !== 1) {
+      fields[name] = 'Provide this query parameter once.';
+    }
+  }
+
+  const value = (name: typeof DOCUMENT_LIST_QUERY_FIELDS[number]): string | undefined => {
+    if (params.getAll(name).length !== 1) return undefined;
+    return params.get(name) ?? undefined;
+  };
+
+  const search = value('search') ?? '';
+  const statusValue = value('status');
+  const status: DocumentListStatus = statusValue === undefined ? 'all' : statusValue as DocumentListStatus;
+  if (statusValue !== undefined && !['all', 'draft', 'finalized'].includes(statusValue)) {
+    fields.status = 'Choose all, draft, or finalized.';
+  }
+
+  const issueDateStartValue = value('issueDateStart');
+  const issueDateEndValue = value('issueDateEnd');
+  if (issueDateStartValue !== undefined && !isCalendarDate(issueDateStartValue)) {
+    fields.issueDateStart = 'Enter a valid calendar date.';
+  }
+  if (issueDateEndValue !== undefined && !isCalendarDate(issueDateEndValue)) {
+    fields.issueDateEnd = 'Enter a valid calendar date.';
+  }
+  if (
+    issueDateStartValue !== undefined
+    && issueDateEndValue !== undefined
+    && isCalendarDate(issueDateStartValue)
+    && isCalendarDate(issueDateEndValue)
+    && issueDateStartValue > issueDateEndValue
+  ) {
+    fields.issueDateEnd = 'End date must be on or after start date.';
+  }
+
+  const sortValue = value('sort');
+  const sort: DocumentListSort = sortValue === undefined ? 'desc' : sortValue as DocumentListSort;
+  if (sortValue !== undefined && sortValue !== 'desc' && sortValue !== 'asc') {
+    fields.sort = 'Choose ascending or descending issue date.';
+  }
+
+  const pageValue = value('page');
+  let page = 1;
+  if (pageValue !== undefined) {
+    if (!/^[1-9]\d*$/.test(pageValue)) {
+      fields.page = 'Enter a positive whole page number.';
+    } else {
+      const parsedPage = Number(pageValue);
+      if (!Number.isSafeInteger(parsedPage) || parsedPage - 1 > Math.floor(Number.MAX_SAFE_INTEGER / DOCUMENT_PAGE_SIZE)) {
+        fields.page = 'Enter a positive whole page number.';
+      } else {
+        page = parsedPage;
+      }
+    }
+  }
+
+  if (Object.keys(fields).length > 0) return { fields };
+  return {
+    fields,
+    values: {
+      search: search.trim(),
+      status,
+      ...(issueDateStartValue === undefined ? {} : { issueDateStart: issueDateStartValue }),
+      ...(issueDateEndValue === undefined ? {} : { issueDateEnd: issueDateEndValue }),
+      sort,
+      page,
+    },
+  };
+}
+
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_DATABASE_INTEGER = 2_147_483_647;
+
+type DocumentListStatus = 'all' | 'draft' | 'finalized';
+type DocumentListSort = 'desc' | 'asc';
+type DocumentListQuery = {
+  search: string;
+  status: DocumentListStatus;
+  issueDateStart?: string;
+  issueDateEnd?: string;
+  sort: DocumentListSort;
+  page: number;
+};
 
 type ParsedLineValues = Partial<{
   description: string;
@@ -369,12 +460,35 @@ export function createDocumentsRouter(clock: Clock): Router {
   });
 
   router.get('/', async (request, response, next) => {
+    const parsed = parseDocumentListQuery(request);
+    if (!parsed.values) {
+      sendValidation(response, parsed.fields);
+      return;
+    }
+    const query = parsed.values;
+
     const ownerId = requestOwnerId(request);
+    const filters = [];
+    if (query.search) {
+      const escapedSearch = query.search.replace(/[\\%_]/g, '\\$&');
+      filters.push(ilike(documents.customerName, `%${escapedSearch}%`));
+    }
+    if (query.status !== 'all') filters.push(eq(documents.status, query.status));
+    if (query.issueDateStart) filters.push(gte(documents.issueDate, query.issueDateStart));
+    if (query.issueDateEnd) filters.push(lte(documents.issueDate, query.issueDateEnd));
+    const where = filters.length > 0 ? and(...filters) : undefined;
+    const offset = (query.page - 1) * DOCUMENT_PAGE_SIZE;
+    const issueDateOrder = query.sort === 'asc' ? asc(documents.issueDate) : desc(documents.issueDate);
+
     try {
       const result = await withTenantTransaction(ownerId, async transaction => {
+        const [countResult] = await transaction.select({ totalItems: count() }).from(documents).where(where);
         const rows = await transaction.select().from(documents)
-          .orderBy(desc(documents.issueDate), asc(documents.id));
-        const items = await Promise.all(rows.slice(0, 25).map(async row => {
+          .where(where)
+          .orderBy(issueDateOrder, asc(documents.id))
+          .limit(DOCUMENT_PAGE_SIZE)
+          .offset(offset);
+        const items = await Promise.all(rows.map(async row => {
           const document = await serializeDocument(transaction, row);
           return {
             id: document.id,
@@ -387,10 +501,10 @@ export function createDocumentsRouter(clock: Clock): Router {
         }));
         return {
           items,
-          page: 1,
-          pageSize: 25,
-          totalItems: rows.length,
-          totalPages: Math.ceil(rows.length / 25),
+          page: query.page,
+          pageSize: DOCUMENT_PAGE_SIZE,
+          totalItems: countResult?.totalItems ?? 0,
+          totalPages: Math.ceil((countResult?.totalItems ?? 0) / DOCUMENT_PAGE_SIZE),
         };
       });
       response.status(200).json(result);
