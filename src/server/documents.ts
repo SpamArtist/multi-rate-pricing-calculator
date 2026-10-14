@@ -527,6 +527,73 @@ export function createDocumentsRouter(clock: Clock): Router {
     }
   });
 
+  router.post('/:id/duplicate', json({ limit: '64kb' }), async (request, response, next) => {
+    const fields = Object.create(null) as Fields;
+    const body = request.body === undefined ? {} : request.body;
+    if (!isRecord(body)) {
+      fields.body = 'Send an object with an issue date.';
+    } else {
+      if (!Object.hasOwn(body, 'issueDate')) fields.issueDate = 'Enter a valid calendar date.';
+      for (const key of Object.keys(body)) {
+        if (key !== 'issueDate') fields[key] = 'This field is not allowed.';
+      }
+      if (Object.hasOwn(body, 'issueDate') && !isCalendarDate(body.issueDate)) {
+        fields.issueDate = 'Enter a valid calendar date.';
+      }
+    }
+    if (Object.keys(fields).length > 0) {
+      sendValidation(response, fields);
+      return;
+    }
+    if (!UUID_PATTERN.test(request.params.id)) {
+      sendNotFound(response);
+      return;
+    }
+
+    const ownerId = requestOwnerId(request);
+    const issueDate = (body as { issueDate: string }).issueDate;
+    try {
+      const duplicate = await withTenantTransaction(ownerId, async transaction => {
+        const [source] = await transaction.select().from(documents)
+          .where(eq(documents.id, request.params.id))
+          .for('update')
+          .limit(1);
+        if (!source) return undefined;
+
+        const sourceLines = await transaction.select().from(lineItems)
+          .where(eq(lineItems.documentId, source.id))
+          .orderBy(asc(lineItems.position), asc(lineItems.id));
+        const inserted = await transaction.execute<{ id: string }>(sql`
+          INSERT INTO documents (owner_id, title, customer_name, issue_date)
+          VALUES (${ownerId}, ${source.title.trim()}, ${source.customerName.trim()}, ${issueDate})
+          RETURNING id
+        `);
+        const copyId = inserted.rows[0].id;
+        for (const [index, line] of sourceLines.entries()) {
+          await transaction.execute(sql`
+            INSERT INTO line_items (
+              document_id, position, description, quantity, unit_price_cents, discount_cents, tax_rate_basis_points
+            ) VALUES (
+              ${copyId}, ${index + 1}, ${line.description}, ${line.quantity}, ${line.unitPriceCents},
+              ${line.discountCents}, ${line.taxRateBasisPoints}
+            )
+          `);
+        }
+        const [copy] = await transaction.select().from(documents)
+          .where(eq(documents.id, copyId))
+          .limit(1);
+        return serializeDocument(transaction, copy);
+      });
+      if (!duplicate) {
+        sendNotFound(response);
+        return;
+      }
+      response.status(201).json(duplicate);
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.post('/:id/finalize', json({ limit: '64kb' }), async (request, response, next) => {
     const fields = Object.create(null) as Fields;
     const declaredBodyLength = Number(request.get('content-length') ?? '0');

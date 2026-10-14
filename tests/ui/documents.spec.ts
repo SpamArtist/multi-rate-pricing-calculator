@@ -184,6 +184,128 @@ test('saves incomplete new document, repairs it, finalizes snapshot, and reloads
     await test.info().attach('issue-17-finalized-snapshot.json', {
       body: JSON.stringify(snapshot, null, 2), contentType: 'application/json',
     });
+
+    const finalizedSourceUrl = page.url();
+    const localToday = await page.evaluate(() => {
+      const date = new Date();
+      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    });
+    await expect(page.getByRole('button', { name: 'Duplicate' })).toBeVisible();
+    await page.getByRole('button', { name: 'Duplicate' }).click();
+    await expect(page).toHaveURL(finalizedSourceUrl);
+    await expect(page.getByRole('status')).toHaveText('Draft duplicated.');
+    const copyLink = page.getByRole('link', { name: 'Open copy' });
+    await expect(copyLink).toBeVisible();
+    const copyHref = await copyLink.getAttribute('href');
+    const copyId = decodeURIComponent(copyHref!.split('/').at(-1)!);
+    await copyLink.click();
+    await expect(page.getByLabel('Issue date')).toHaveValue(localToday);
+    await expect(page.getByLabel('Document name')).toBeEnabled();
+    const duplicateResponse = await page.context().request.get(new URL(`/documents/${copyId}`, page.url()).toString());
+    expect(duplicateResponse.status()).toBe(200);
+    const duplicate = await duplicateResponse.json() as { status: string; issueDate: string; finalizedAt: string | null };
+    expect(duplicate).toMatchObject({ status: 'draft', issueDate: localToday, finalizedAt: null });
+    const unchangedSnapshot = await page.context().request.get(new URL(`/documents/${documentId}`, page.url()).toString());
+    expect(await unchangedSnapshot.json()).toEqual(snapshot);
+  } finally {
+    await migrationPool.query('DELETE FROM users WHERE email_canonical = $1', [email.toLowerCase()]);
+  }
+});
+
+test('duplicates a saved draft while source stays open and copy stays editable', async ({ page }) => {
+  const email = `duplicate-ui-${randomUUID()}@example.com`;
+  const password = 'A🔐b$cD';
+  try {
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Create account' }).click();
+    await page.getByLabel('Email address').fill(email);
+    await page.getByLabel('Password').fill(password);
+    await page.getByRole('button', { name: 'Create account' }).click();
+    await expect(page.getByRole('heading', { name: 'Documents', exact: true })).toBeVisible();
+
+    await page.getByRole('button', { name: 'New document' }).click();
+    await expect(page.getByRole('button', { name: 'Duplicate' })).toHaveCount(0);
+    const localToday = await page.evaluate(() => {
+      const date = new Date();
+      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    });
+    await page.getByLabel('Document name').fill('Duplicate source');
+    await page.getByLabel('Customer name').fill('Original customer');
+    await expect(page.getByLabel('Issue date')).toHaveValue(localToday);
+
+    await page.getByRole('button', { name: 'Add line item' }).click();
+    const firstLine = page.getByTestId('line-item').nth(0);
+    await firstLine.getByLabel('Line description').fill('First line');
+    await firstLine.getByLabel('Qty').fill('2');
+    await firstLine.getByLabel('Unit price €').fill('12.50');
+    await firstLine.getByLabel('Discount €').fill('1.00');
+    await firstLine.getByLabel('Tax %').fill('19.00');
+    await page.getByRole('button', { name: 'Add line item' }).click();
+    const secondLine = page.getByTestId('line-item').nth(1);
+    await secondLine.getByLabel('Line description').fill('Second line');
+    await secondLine.getByLabel('Qty').fill('1');
+    await secondLine.getByLabel('Unit price €').fill('8.00');
+    await secondLine.getByLabel('Tax %').fill('7.50');
+
+    await page.getByRole('button', { name: 'Save as draft' }).click();
+    await expect(page.getByRole('heading', { name: 'Duplicate source' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Duplicate' })).toBeVisible();
+    const sourceId = new URL(page.url()).hash.split('/').at(-1)!;
+    const sourceUrl = page.url();
+    const sourceResponse = await page.context().request.get(new URL(`/documents/${sourceId}`, page.url()).toString());
+    expect(sourceResponse.status()).toBe(200);
+    const sourceBefore = await sourceResponse.json() as {
+      id: string; title: string; customerName: string; issueDate: string; status: string;
+      finalizedAt: string | null; lineItems: Array<Record<string, unknown>>; amounts: Record<string, number>;
+    };
+    expect(sourceBefore.status).toBe('draft');
+
+    await page.getByRole('button', { name: 'Duplicate' }).click();
+    await expect(page).toHaveURL(sourceUrl);
+    await expect(page.getByRole('heading', { name: 'Duplicate source' })).toBeVisible();
+    await expect(page.getByRole('status')).toHaveText('Draft duplicated.');
+    const openCopy = page.getByRole('link', { name: 'Open copy' });
+    await expect(openCopy).toBeVisible();
+    const href = await openCopy.getAttribute('href');
+    expect(href).toMatch(/^#\/documents\/[0-9a-f-]+$/i);
+    const copyId = decodeURIComponent(href!.split('/').at(-1)!);
+
+    await openCopy.click();
+    await expect(page).toHaveURL(new RegExp(`#\\/documents\\/${copyId}$`));
+    await expect(page.getByRole('heading', { name: 'Duplicate source' })).toBeVisible();
+    await expect(page.getByLabel('Issue date')).toHaveValue(localToday);
+    await expect(page.getByLabel('Document name')).toBeEnabled();
+    await expect(page.getByRole('button', { name: 'Save changes' })).toBeVisible();
+
+    const copyResponse = await page.context().request.get(new URL(`/documents/${copyId}`, page.url()).toString());
+    expect(copyResponse.status()).toBe(200);
+    const copy = await copyResponse.json() as typeof sourceBefore;
+    expect(copy).toMatchObject({
+      title: sourceBefore.title,
+      customerName: sourceBefore.customerName,
+      issueDate: localToday,
+      status: 'draft',
+      finalizedAt: null,
+    });
+    expect(copy.id).not.toBe(sourceBefore.id);
+    expect(copy.lineItems.map(line => line.id)).not.toEqual(sourceBefore.lineItems.map(line => line.id));
+    const copiedInputs = (items: Array<Record<string, unknown>>): Array<Record<string, unknown>> => items.map(item => {
+      const input = { ...item };
+      delete input.id;
+      return input;
+    });
+    expect(copiedInputs(copy.lineItems)).toEqual(copiedInputs(sourceBefore.lineItems));
+    const sourceAfter = await page.context().request.get(new URL(`/documents/${sourceId}`, page.url()).toString());
+    expect(await sourceAfter.json()).toEqual(sourceBefore);
+
+    await page.getByLabel('Customer name').fill('Edited copy customer');
+    await page.getByRole('button', { name: 'Save changes' }).click();
+    await expect(page.getByRole('status')).toHaveText('Draft saved.');
+    const editedCopyResponse = await page.context().request.get(new URL(`/documents/${copyId}`, page.url()).toString());
+    expect(await editedCopyResponse.json()).toMatchObject({ status: 'draft', customerName: 'Edited copy customer' });
+    await test.info().attach('issue-18-duplicated-document.json', {
+      body: JSON.stringify({ source: sourceBefore, copy }, null, 2), contentType: 'application/json',
+    });
   } finally {
     await migrationPool.query('DELETE FROM users WHERE email_canonical = $1', [email.toLowerCase()]);
   }

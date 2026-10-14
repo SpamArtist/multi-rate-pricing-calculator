@@ -726,6 +726,7 @@ function DocumentEditor({
   const [serverErrors, setServerErrors] = React.useState<FieldErrors>({});
   const [serverLineErrors, setServerLineErrors] = React.useState<Record<string, Partial<Record<EditableLineField, string>>>>({});
   const [message, setMessage] = React.useState('');
+  const [duplicateCopyId, setDuplicateCopyId] = React.useState<string | null>(null);
   const [submitted, setSubmitted] = React.useState(false);
   const [pending, setPending] = React.useState(false);
 
@@ -1112,6 +1113,36 @@ function DocumentEditor({
     }
   }
 
+  async function duplicateDocument(): Promise<void> {
+    if (!documentId || !document || pending) return;
+    setPending(true);
+    setMessage('');
+    setDuplicateCopyId(null);
+    try {
+      const response = await fetch(`/documents/${encodeURIComponent(documentId)}/duplicate`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ issueDate: localToday() }),
+      });
+      if (response.status === 401) {
+        onAuthExpired();
+        return;
+      }
+      const result = await response.json() as DocumentData | { error?: { message?: string } };
+      if (!response.ok) {
+        setMessage((result as { error?: { message?: string } }).error?.message ?? 'Could not duplicate this document.');
+        return;
+      }
+      const copy = result as DocumentData;
+      setDuplicateCopyId(copy.id);
+      setMessage('Draft duplicated.');
+    } catch {
+      setMessage('Connection failed. Source document stays open. Try again.');
+    } finally {
+      setPending(false);
+    }
+  }
+
   const amounts = document?.status === 'finalized'
     ? document.amounts
     : previewAmounts;
@@ -1139,15 +1170,22 @@ function DocumentEditor({
               disabled={pending}
               onClick={() => void saveDraft(true)}
             >{pending ? 'Finalizing…' : 'Finalize document'}</button>}
+            {document && <button
+              className="secondary-button"
+              type="button"
+              disabled={pending}
+              onClick={() => void duplicateDocument()}
+            >{pending ? 'Working…' : 'Duplicate'}</button>}
             <button className="secondary-button print-button" type="button" onClick={() => window.print()}>Print</button>
           </div>
         </header>
 
         {loadError && <p className="request-error" role="alert">{loadError}</p>}
         {message && <p
-          className={message === 'Draft saved.' || message.startsWith('Document finalized.') ? 'success-message' : 'request-error'}
-          role={message === 'Draft saved.' || message.startsWith('Document finalized.') ? 'status' : 'alert'}
+          className={message === 'Draft saved.' || message === 'Draft duplicated.' || message.startsWith('Document finalized.') ? 'success-message' : 'request-error'}
+          role={message === 'Draft saved.' || message === 'Draft duplicated.' || message.startsWith('Document finalized.') ? 'status' : 'alert'}
         >{message}</p>}
+        {duplicateCopyId && <a className="back-link" href={`#/documents/${encodeURIComponent(duplicateCopyId)}`}>Open copy →</a>}
 
         <section className="metadata editor-section" aria-labelledby="metadata-heading">
           <div className="section-heading">
