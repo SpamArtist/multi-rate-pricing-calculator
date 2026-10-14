@@ -1323,9 +1323,23 @@ button:active:not(:disabled) {
 }
 
 @media print {
+  @page {
+    margin: 14mm;
+  }
+
+  html,
+  body,
+  .app-frame {
+    min-block-size: auto;
+    background: oklch(1 0 none);
+    color: oklch(0 0 none);
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
   .app-topbar,
   .back-link,
-  .editor-actions button,
+  button,
   .request-error,
   .success-message {
     display: none !important;
@@ -1333,11 +1347,58 @@ button:active:not(:disabled) {
 
   .ledger-page {
     max-inline-size: none;
+    margin: 0;
     padding: 0;
   }
 
   input {
     padding-inline: 0 !important;
     border: 0 !important;
+    background: transparent !important;
+    color: oklch(0 0 none) !important;
+  }
+
+  input::placeholder {
+    color: transparent !important;
+  }
+
+  .field label,
+  .section-label,
+  .line-index,
+  .line-math,
+  .calculation-note,
+  .snapshot-note,
+  .amount-list dt {
+    color: oklch(0.28 0 none) !important;
+  }
+
+  .line-index {
+    border: 1px solid currentColor;
+    background: transparent;
+  }
+
+  .editor-heading,
+  .editor-section,
+  .line-item {
+    border-color: oklch(0.62 0 none);
+  }
+
+  .status-badge {
+    padding: 0.1rem 0.35rem;
+    border: 1px solid currentColor;
+    border-radius: 0.2rem;
+    background: transparent !important;
+    color: oklch(0 0 none) !important;
+    text-transform: uppercase;
+  }
+
+  .status-badge::before {
+    display: none;
+  }
+
+  .line-item,
+  .breakdown {
+    break-inside: avoid;
+    page-break-inside: avoid;
   }
 }
