@@ -14,6 +14,7 @@ export default defineConfig({
   webServer: {
     command: 'npm run dev',
     url: baseURL,
+    env: { PRICING_PLAYWRIGHT_TEST: '1' },
     reuseExistingServer: !process.env.CI,
     timeout: 30_000,
   },

@@ -102,6 +102,125 @@ test('starts locally, saves a draft, reopens from Documents, and verifies persis
   }
 });
 
+test('adds priced line items, previews exact arithmetic, and reloads server totals', async ({ page }) => {
+  const email = `line-pricing-${randomUUID()}@example.com`;
+  const password = 'A🔐b$cD';
+  try {
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Create account' }).click();
+    await page.getByLabel('Email address').fill(email);
+    await page.getByLabel('Password').fill(password);
+    await page.getByRole('button', { name: 'Create account' }).click();
+    await expect(page.getByRole('heading', { name: 'Documents', exact: true })).toBeVisible();
+
+    await page.getByRole('button', { name: 'New document' }).click();
+    await page.getByLabel('Document name').fill('Brand workshop');
+    await page.getByRole('button', { name: 'Add line item' }).click();
+    const firstLine = page.getByTestId('line-item').nth(0);
+    await firstLine.getByLabel('Line description').fill('Brand workshop');
+    await firstLine.getByLabel('Qty').fill('3');
+    await firstLine.getByLabel('Unit price €').fill('19.99');
+    await firstLine.getByLabel('Discount €').fill('10.00');
+    await firstLine.getByLabel('Tax %').fill('19.00');
+    await page.getByRole('button', { name: 'Add line item' }).click();
+    const secondLine = page.getByTestId('line-item').nth(1);
+    await secondLine.getByLabel('Line description').fill('Print-ready files');
+    await secondLine.getByLabel('Qty').fill('2');
+    await secondLine.getByLabel('Unit price €').fill('2.50');
+    await secondLine.getByLabel('Tax %').fill('7.50');
+
+    await expect(firstLine.locator('.line-math')).toContainText(/59\.97.*10\.00.*49\.97.*9\.49/);
+    await expect(firstLine.locator('.line-sum')).toContainText('59.46');
+    await expect(secondLine.locator('.line-math')).toContainText(/5\.00.*0\.00.*5\.00.*0\.38/);
+    await expect(secondLine.locator('.line-sum')).toContainText('5.38');
+    await expect(page.locator('.amount-list')).toContainText('64.97');
+    await expect(page.locator('.amount-list')).toContainText('10.00');
+    await expect(page.locator('.amount-list')).toContainText('54.97');
+    await expect(page.locator('.amount-list')).toContainText('9.87');
+    await expect(page.locator('.grand-total')).toContainText('64.84');
+
+    await page.getByRole('button', { name: 'Save as draft' }).click();
+    await expect(page).toHaveURL(/#\/documents\/[0-9a-f-]+$/i);
+    const documentId = new URL(page.url()).hash.split('/').at(-1)!;
+    await expect(page.getByTestId('line-item')).toHaveCount(2);
+    await expect(page.locator('.grand-total')).toContainText('64.84');
+    await page.reload();
+    await expect(page.getByRole('heading', { name: 'Brand workshop' })).toBeVisible();
+    await expect(page.getByTestId('line-item')).toHaveCount(2);
+    await expect(page.getByLabel('Line description').nth(0)).toHaveValue('Brand workshop');
+    await expect(page.getByLabel('Unit price €').nth(1)).toHaveValue('2.50');
+    await expect(page.locator('.grand-total')).toContainText('64.84');
+
+    const response = await page.context().request.get(new URL(`/documents/${documentId}`, page.url()).toString());
+    expect(response.status()).toBe(200);
+    const persisted = await response.json() as {
+      lineItems: Array<{ quantity: number; unitPriceCents: number; discountCents: number; taxRateBasisPoints: number; amounts: Record<string, number> }>;
+      amounts: Record<string, number>;
+    };
+    expect(persisted.lineItems.map(line => ({
+      quantity: line.quantity,
+      unitPriceCents: line.unitPriceCents,
+      discountCents: line.discountCents,
+      taxRateBasisPoints: line.taxRateBasisPoints,
+      amounts: line.amounts,
+    }))).toEqual([
+      {
+        quantity: 3, unitPriceCents: 1999, discountCents: 1000, taxRateBasisPoints: 1900,
+        amounts: { subtotalCents: 5997, discountCents: 1000, taxableCents: 4997, taxCents: 949, totalCents: 5946 },
+      },
+      {
+        quantity: 2, unitPriceCents: 250, discountCents: 0, taxRateBasisPoints: 750,
+        amounts: { subtotalCents: 500, discountCents: 0, taxableCents: 500, taxCents: 38, totalCents: 538 },
+      },
+    ]);
+    expect(persisted.amounts).toEqual({
+      subtotalCents: 6497, discountCents: 1000, taxableCents: 5497, taxCents: 987, totalCents: 6484,
+    });
+    await test.info().attach('issue-15-authoritative-document.json', {
+      body: JSON.stringify(persisted, null, 2), contentType: 'application/json',
+    });
+    await page.screenshot({ fullPage: true }).then(body => test.info().attach('issue-15-ledger-editor-desktop.png', { body, contentType: 'image/png' }));
+    await page.setViewportSize({ width: 390, height: 844 });
+    const mobileWidth = await page.evaluate(() => document.documentElement.scrollWidth);
+    expect(mobileWidth).toBeLessThanOrEqual(390);
+    await page.screenshot({ fullPage: true }).then(body => test.info().attach('issue-15-ledger-editor-mobile.png', { body, contentType: 'image/png' }));
+  } finally {
+    await migrationPool.query('DELETE FROM users WHERE email_canonical = $1', [email.toLowerCase()]);
+  }
+});
+
+test('keeps invalid unfinished line visible and blocks draft save', async ({ page }) => {
+  const email = `unfinished-line-${randomUUID()}@example.com`;
+  const password = 'A🔐b$cD';
+  try {
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Create account' }).click();
+    await page.getByLabel('Email address').fill(email);
+    await page.getByLabel('Password').fill(password);
+    await page.getByRole('button', { name: 'Create account' }).click();
+    await expect(page.getByRole('heading', { name: 'Documents', exact: true })).toBeVisible();
+
+    await page.getByRole('button', { name: 'New document' }).click();
+    await page.getByLabel('Document name').fill('Unfinished pricing');
+    await page.getByRole('button', { name: 'Add line item' }).click();
+    const line = page.getByTestId('line-item').nth(0);
+    await line.getByLabel('Line description').fill('Retained input');
+    await line.getByLabel('Unit price €').fill('1.239');
+    await page.getByRole('button', { name: 'Save as draft' }).click();
+
+    await expect(page.getByText('Check line item fields before saving.')).toBeVisible();
+    await expect(page.getByText('Enter a EUR amount with up to two decimals.')).toBeVisible();
+    await expect(line.getByLabel('Line description')).toHaveValue('Retained input');
+    await expect(line.getByLabel('Unit price €')).toHaveValue('1.239');
+    await expect(page).toHaveURL(/#\/documents\/new$/);
+    const response = await page.context().request.get(new URL('/documents', page.url()).toString());
+    const list = await response.json() as { items: Array<{ title: string }> };
+    expect(list.items.some(item => item.title === 'Unfinished pricing')).toBe(false);
+  } finally {
+    await migrationPool.query('DELETE FROM users WHERE email_canonical = $1', [email.toLowerCase()]);
+  }
+});
+
 test('restores unsaved editor input after session expiry and sign-in', async ({ page }) => {
   const email = `resume-${randomUUID()}@example.com`;
   const password = 'A🔐b$cD';

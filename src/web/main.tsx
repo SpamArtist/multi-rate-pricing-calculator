@@ -1,6 +1,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { isCalendarDate } from '../shared/document-validation.js';
+import { amountsWithinSafeRange, calculateDocumentAmounts, calculateLineAmounts, MAX_SAFE_AMOUNT } from '../shared/pricing.js';
 import { validateRegistrationFields } from '../shared/auth-validation.js';
 import './styles.css';
 
@@ -8,6 +9,17 @@ type User = { id: string; email: string };
 type RegistrationValues = { email: string; password: string };
 type AuthMode = 'sign-in' | 'sign-up';
 type DocumentValues = { title: string; customerName: string; issueDate: string };
+type LineValues = {
+  key: string;
+  id?: string;
+  description: string;
+  quantity: string;
+  unitPrice: string;
+  discount: string;
+  taxRate: string;
+  amounts?: Amounts;
+};
+type EditableLineField = 'description' | 'quantity' | 'unitPrice' | 'discount' | 'taxRate';
 type Amounts = {
   subtotalCents: number;
   discountCents: number;
@@ -42,6 +54,139 @@ type FieldErrors = Record<string, string>;
 type Route = { kind: 'dashboard' } | { kind: 'new' } | { kind: 'document'; id: string };
 
 const EDITOR_STORAGE_PREFIX = 'pricing-calculator:editor:';
+
+function lineStorageKey(ownerId: string, documentId?: string): string {
+  return `${EDITOR_STORAGE_PREFIX}${ownerId}:${documentId ?? 'new'}:lines`;
+}
+
+function newLineValues(): LineValues {
+  return {
+    key: globalThis.crypto.randomUUID(),
+    description: '',
+    quantity: '1',
+    unitPrice: '0.00',
+    discount: '0.00',
+    taxRate: '0.00',
+  };
+}
+
+function lineValuesFromDocument(document: DocumentData): LineValues[] {
+  return document.lineItems.map(line => ({
+    key: line.id,
+    id: line.id,
+    description: line.description,
+    quantity: String(line.quantity),
+    unitPrice: centsToInput(line.unitPriceCents),
+    discount: centsToInput(line.discountCents),
+    taxRate: `${Math.floor(line.taxRateBasisPoints / 100)}.${String(line.taxRateBasisPoints % 100).padStart(2, '0')}`,
+    amounts: line.amounts,
+  }));
+}
+
+function readEditorLines(ownerId: string, documentId?: string): LineValues[] | null {
+  try {
+    const stored = window.sessionStorage.getItem(lineStorageKey(ownerId, documentId));
+    if (!stored) return null;
+    const lines = JSON.parse(stored) as unknown;
+    if (!Array.isArray(lines)) return null;
+    return lines.filter((line): line is LineValues => isLineValues(line));
+  } catch {
+    return null;
+  }
+}
+
+function isLineValues(value: unknown): value is LineValues {
+  if (typeof value !== 'object' || value === null) return false;
+  const line = value as Partial<LineValues>;
+  return typeof line.key === 'string'
+    && (line.id === undefined || typeof line.id === 'string')
+    && typeof line.description === 'string'
+    && typeof line.quantity === 'string'
+    && typeof line.unitPrice === 'string'
+    && typeof line.discount === 'string'
+    && typeof line.taxRate === 'string'
+    && (line.amounts === undefined || typeof line.amounts === 'object');
+}
+
+function storeEditorLines(ownerId: string, documentId: string | undefined, lines: LineValues[]): void {
+  try {
+    window.sessionStorage.setItem(lineStorageKey(ownerId, documentId), JSON.stringify(lines));
+  } catch {
+    // Live form state remains available when browser storage is unavailable.
+  }
+}
+
+function centsToInput(cents: number): string {
+  return `${Math.floor(cents / 100)}.${String(cents % 100).padStart(2, '0')}`;
+}
+
+function parseMoneyInput(value: string): bigint | null {
+  const normalized = value.trim().replace(',', '.');
+  if (!/^\d+(?:\.\d{1,2})?$/.test(normalized)) return null;
+  const [whole, fraction = ''] = normalized.split('.');
+  const cents = BigInt(whole) * 100n + BigInt(fraction.padEnd(2, '0'));
+  return cents <= MAX_SAFE_AMOUNT ? cents : null;
+}
+
+function parseQuantityInput(value: string): bigint | null {
+  const normalized = value.trim();
+  if (!/^\d+$/.test(normalized)) return null;
+  const quantity = BigInt(normalized);
+  return quantity > 0n && quantity <= MAX_SAFE_AMOUNT ? quantity : null;
+}
+
+function parseTaxInput(value: string): number | null {
+  const normalized = value.trim().replace(',', '.');
+  if (!/^(?:\d+)(?:\.\d{1,2})?$/.test(normalized)) return null;
+  const [whole, fraction = ''] = normalized.split('.');
+  const basisPoints = BigInt(whole) * 100n + BigInt(fraction.padEnd(2, '0'));
+  return basisPoints <= 10_000n ? Number(basisPoints) : null;
+}
+
+type LineInputErrors = Partial<Record<'quantity' | 'unitPrice' | 'discount' | 'taxRate', string>>;
+type LinePreview = { errors: LineInputErrors; amounts?: Amounts; input?: {
+  quantity: bigint;
+  unitPriceCents: bigint;
+  discountCents: bigint;
+  taxRateBasisPoints: number;
+} };
+
+function previewLine(line: LineValues): LinePreview {
+  const errors: LineInputErrors = {};
+  const quantity = parseQuantityInput(line.quantity);
+  const unitPriceCents = parseMoneyInput(line.unitPrice);
+  const discountCents = parseMoneyInput(line.discount);
+  const taxRateBasisPoints = parseTaxInput(line.taxRate);
+  if (quantity === null) errors.quantity = 'Enter a positive whole quantity.';
+  if (unitPriceCents === null) errors.unitPrice = 'Enter a EUR amount with up to two decimals.';
+  if (discountCents === null) errors.discount = 'Enter a EUR amount with up to two decimals.';
+  if (taxRateBasisPoints === null) errors.taxRate = 'Enter a tax rate from 0 to 100.00%.';
+  if (Object.keys(errors).length > 0 || quantity === null || unitPriceCents === null || discountCents === null || taxRateBasisPoints === null) {
+    return { errors };
+  }
+
+  const input = { quantity, unitPriceCents, discountCents, taxRateBasisPoints };
+  const amounts = calculateLineAmounts(input);
+  if (discountCents > amounts.subtotalCents) {
+    errors.discount = 'Discount cannot exceed the line subtotal.';
+  }
+  if (!amountsWithinSafeRange(amounts)) {
+    errors.unitPrice = 'Line amounts exceed the supported safe integer range.';
+  }
+  if (Object.keys(errors).length > 0) return { errors };
+  if (line.id && line.amounts) return { errors, input, amounts: line.amounts };
+  return {
+    errors,
+    input,
+    amounts: {
+      subtotalCents: Number(amounts.subtotalCents),
+      discountCents: Number(amounts.discountCents),
+      taxableCents: Number(amounts.taxableCents),
+      taxCents: Number(amounts.taxCents),
+      totalCents: Number(amounts.totalCents),
+    },
+  };
+}
 
 function authFieldErrors(values: RegistrationValues): Partial<Record<keyof RegistrationValues, string>> {
   const { fields } = validateRegistrationFields(values.email, values.password);
@@ -112,6 +257,7 @@ function storeEditorValues(ownerId: string, documentId: string | undefined, valu
 function clearEditorValues(ownerId: string, documentId?: string): void {
   try {
     window.sessionStorage.removeItem(editorStorageKey(ownerId, documentId));
+    window.sessionStorage.removeItem(lineStorageKey(ownerId, documentId));
   } catch {
     // The server copy remains authoritative after a successful save.
   }
@@ -136,8 +282,20 @@ function formatDate(value: string): string {
     .format(new Date(year, month - 1, day));
 }
 
+const EURO_WHOLE_FORMATTER = new Intl.NumberFormat('en-IE', {
+  style: 'currency', currency: 'EUR', minimumFractionDigits: 0, maximumFractionDigits: 0,
+});
+const EURO_DECIMAL_SEPARATOR = new Intl.NumberFormat('en-IE', { minimumFractionDigits: 1 })
+  .formatToParts(1.1)
+  .find(part => part.type === 'decimal')?.value ?? '.';
+
 function formatEuro(cents: number): string {
-  return new Intl.NumberFormat('en-IE', { style: 'currency', currency: 'EUR' }).format(cents / 100);
+  const signed = BigInt(cents);
+  const negative = signed < 0n;
+  const absolute = negative ? -signed : signed;
+  const wholeEuros = Number(absolute / 100n);
+  const fraction = String(absolute % 100n).padStart(2, '0');
+  return `${negative ? '−' : ''}${EURO_WHOLE_FORMATTER.format(wholeEuros)}${EURO_DECIMAL_SEPARATOR}${fraction}`;
 }
 
 async function responseError(response: Response): Promise<{ message?: string; fields?: FieldErrors }> {
@@ -480,6 +638,7 @@ function DocumentEditor({
   const [values, setValues] = React.useState<DocumentValues | null>(() => documentId
     ? null
     : readEditorValues(owner.id) ?? { title: '', customerName: '', issueDate: localToday() });
+  const [lines, setLines] = React.useState<LineValues[]>(() => documentId ? [] : readEditorLines(owner.id) ?? []);
   const [loading, setLoading] = React.useState(Boolean(documentId));
   const [loadError, setLoadError] = React.useState('');
   const [serverErrors, setServerErrors] = React.useState<FieldErrors>({});
@@ -508,6 +667,11 @@ function DocumentEditor({
           customerName: result.customerName,
           issueDate: result.issueDate,
         });
+        const savedLines = lineValuesFromDocument(result);
+        const recoveredLines = readEditorLines(owner.id, documentId);
+        const savedIds = new Set(savedLines.map(line => line.id));
+        const unsavedLines = recoveredLines?.filter(line => !line.id || !savedIds.has(line.id)) ?? [];
+        setLines([...savedLines, ...unsavedLines]);
       })
       .catch((reason: unknown) => {
         if (active) setLoadError(reason instanceof Error ? reason.message : 'Could not load this document.');
@@ -526,6 +690,20 @@ function DocumentEditor({
   }
 
   const localErrors = documentFieldErrors(values);
+  const linePreviews = lines.map(previewLine);
+  const hasLineErrors = linePreviews.some(preview => Object.keys(preview.errors).length > 0);
+  const previewAmounts = (() => {
+    if (hasLineErrors) return undefined;
+    const exact = calculateDocumentAmounts(linePreviews.flatMap(preview => preview.input ? [preview.input] : []));
+    if (!amountsWithinSafeRange(exact)) return undefined;
+    return {
+      subtotalCents: Number(exact.subtotalCents),
+      discountCents: Number(exact.discountCents),
+      taxableCents: Number(exact.taxableCents),
+      taxCents: Number(exact.taxCents),
+      totalCents: Number(exact.totalCents),
+    };
+  })();
   const titleError = serverErrors.title ?? (submitted ? localErrors.title : undefined);
   const dateError = serverErrors.issueDate ?? (submitted ? localErrors.issueDate : undefined);
   const canEdit = !document || document.status === 'draft';
@@ -543,6 +721,21 @@ function DocumentEditor({
     setMessage('');
   }
 
+  function changeLine(key: string, field: EditableLineField, value: string): void {
+    const next = lines.map(line => line.key === key && !line.id ? { ...line, [field]: value } : line);
+    setLines(next);
+    storeEditorLines(owner.id, documentId, next);
+    setMessage('');
+  }
+
+  function addLine(): void {
+    const next = [...lines, newLineValues()];
+    setLines(next);
+    storeEditorLines(owner.id, documentId, next);
+    setSubmitted(false);
+    setMessage('');
+  }
+
   async function saveDraft(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     setSubmitted(true);
@@ -550,8 +743,14 @@ function DocumentEditor({
     const errors = documentFieldErrors(values!);
     setServerErrors({});
     if (Object.keys(errors).length > 0) return;
+    if (hasLineErrors || !previewAmounts) {
+      setMessage(hasLineErrors ? 'Check line item fields before saving.' : 'Document amounts exceed the supported safe integer range.');
+      return;
+    }
 
     setPending(true);
+    let createdDocumentId: string | undefined;
+    let linesBeingSaved = [...lines];
     try {
       const response = await fetch(documentId ? `/documents/${encodeURIComponent(documentId)}` : '/documents', {
         method: documentId ? 'PATCH' : 'POST',
@@ -570,25 +769,77 @@ function DocumentEditor({
         return;
       }
       const saved = result as DocumentData;
-      clearEditorValues(owner.id, documentId);
+      createdDocumentId = saved.id;
       if (!documentId) {
-        navigate(`/documents/${encodeURIComponent(saved.id)}`);
+        clearEditorValues(owner.id);
+        storeEditorValues(owner.id, saved.id, values!);
+        storeEditorLines(owner.id, saved.id, linesBeingSaved);
+      }
+      for (const [index, line] of linesBeingSaved.entries()) {
+        if (line.id) continue;
+        const preview = linePreviews[index];
+        if (!preview.input) continue;
+        const lineResponse = await fetch(`/documents/${encodeURIComponent(saved.id)}/line-items`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            description: line.description,
+            quantity: Number(preview.input.quantity),
+            unitPriceCents: Number(preview.input.unitPriceCents),
+            discountCents: Number(preview.input.discountCents),
+            taxRateBasisPoints: preview.input.taxRateBasisPoints,
+          }),
+        });
+        if (lineResponse.status === 401) {
+          onAuthExpired();
+          return;
+        }
+        if (!lineResponse.ok) {
+          const error = await responseError(lineResponse);
+          setServerErrors(error.fields ?? {});
+          setMessage(error.message ?? 'Could not save a line item. Your input is still here.');
+          storeEditorLines(owner.id, saved.id, linesBeingSaved);
+          if (!documentId) navigate(`/documents/${encodeURIComponent(saved.id)}`);
+          return;
+        }
+        const savedLine = await lineResponse.json() as { id: string };
+        linesBeingSaved = linesBeingSaved.map((value, lineIndex) => lineIndex === index ? { ...value, id: savedLine.id } : value);
+        storeEditorLines(owner.id, saved.id, linesBeingSaved);
+      }
+
+      const detailResponse = await fetch(`/documents/${encodeURIComponent(saved.id)}`);
+      if (detailResponse.status === 401) {
+        onAuthExpired();
         return;
       }
-      setDocument(saved);
-      setValues({ title: saved.title, customerName: saved.customerName, issueDate: saved.issueDate });
+      if (!detailResponse.ok) {
+        setMessage('Draft saved, but could not refresh its server totals. Reload to get current values.');
+        return;
+      }
+      const authoritative = await detailResponse.json() as DocumentData;
+      clearEditorValues(owner.id, documentId);
+      clearEditorValues(owner.id, saved.id);
+      setDocument(authoritative);
+      setValues({ title: authoritative.title, customerName: authoritative.customerName, issueDate: authoritative.issueDate });
+      setLines(lineValuesFromDocument(authoritative));
       setSubmitted(false);
       setMessage('Draft saved.');
+      if (!documentId) navigate(`/documents/${encodeURIComponent(authoritative.id)}`);
     } catch {
       setMessage('Connection failed. Your input is still here. Try again.');
+      if (!documentId && createdDocumentId) {
+        storeEditorValues(owner.id, createdDocumentId, values!);
+        storeEditorLines(owner.id, createdDocumentId, linesBeingSaved);
+        navigate(`/documents/${encodeURIComponent(createdDocumentId)}`);
+      }
     } finally {
       setPending(false);
     }
   }
 
-  const amounts = document?.amounts ?? {
-    subtotalCents: 0, discountCents: 0, taxableCents: 0, taxCents: 0, totalCents: 0,
-  };
+  const amounts = document?.status === 'finalized'
+    ? document.amounts
+    : lines.some(line => !line.id) ? previewAmounts : document?.amounts ?? previewAmounts;
 
   return (
     <main className="ledger-page" data-testid="document-editor">
@@ -667,7 +918,64 @@ function DocumentEditor({
             <h2 id="line-items-heading">Line items</h2>
             <span>02</span>
           </div>
-          <p className="empty-lines">No line items yet. Drafts can be saved without lines.</p>
+          {lines.length === 0 && <p className="empty-lines">No line items yet. Drafts can be saved without lines.</p>}
+          {lines.map((line, index) => {
+            const preview = linePreviews[index];
+            const field = (name: Exclude<EditableLineField, 'description'>, label: string, inputMode: 'numeric' | 'decimal'): React.JSX.Element => {
+              const error = submitted ? preview.errors[name as keyof LineInputErrors] : undefined;
+              const inputId = `line-${line.key}-${name}`;
+              const errorId = `${inputId}-error`;
+              return (
+                <div className="field" key={name}>
+                  <label htmlFor={inputId}>{label}</label>
+                  <input
+                    id={inputId}
+                    inputMode={inputMode}
+                    autoComplete="off"
+                    value={line[name]}
+                    disabled={!canEdit || Boolean(line.id) || pending}
+                    aria-invalid={Boolean(error)}
+                    aria-describedby={error ? errorId : undefined}
+                    onChange={event => changeLine(line.key, name, event.currentTarget.value)}
+                  />
+                  {error && <p className="field-error" id={errorId} role="alert">{error}</p>}
+                </div>
+              );
+            };
+            return (
+              <article className="line-item" data-testid="line-item" key={line.key}>
+                <div className="line-header">
+                  <span className="line-index">{String(index + 1).padStart(2, '0')}</span>
+                  <div className="field line-description">
+                    <label className="visually-hidden" htmlFor={`line-${line.key}-description`}>Line description</label>
+                    <input
+                      id={`line-${line.key}-description`}
+                      placeholder="Item or service"
+                      value={line.description}
+                      disabled={!canEdit || Boolean(line.id) || pending}
+                      onChange={event => changeLine(line.key, 'description', event.currentTarget.value)}
+                    />
+                  </div>
+                </div>
+                <div className="line-fields">
+                  {field('quantity', 'Qty', 'numeric')}
+                  {field('unitPrice', 'Unit price €', 'decimal')}
+                  {field('discount', 'Discount €', 'decimal')}
+                  {field('taxRate', 'Tax %', 'decimal')}
+                  <div className="line-sum">
+                    <span>Line total</span>
+                    <strong>{preview.amounts ? formatEuro(preview.amounts.totalCents) : '—'}</strong>
+                  </div>
+                </div>
+                <p className="line-math">
+                  {preview.amounts
+                    ? `${formatEuro(preview.amounts.subtotalCents)} subtotal − ${formatEuro(preview.amounts.discountCents)} discount = ${formatEuro(preview.amounts.taxableCents)} taxable + ${formatEuro(preview.amounts.taxCents)} tax`
+                    : 'Enter valid numeric values to calculate line amounts.'}
+                </p>
+              </article>
+            );
+          })}
+          {canEdit && <button className="add-line" type="button" onClick={addLine}>＋ Add line item</button>}
         </section>
 
         <section className="breakdown editor-section" aria-labelledby="arithmetic-heading">
@@ -676,12 +984,12 @@ function DocumentEditor({
             <span>03</span>
           </div>
           <dl className="amount-list">
-            <div><dt>Line subtotals</dt><dd>{formatEuro(amounts.subtotalCents)}</dd></div>
-            <div><dt>Line discounts</dt><dd>−{formatEuro(amounts.discountCents)}</dd></div>
-            <div><dt>Taxable amount</dt><dd>{formatEuro(amounts.taxableCents)}</dd></div>
-            <div><dt>Sum of line taxes</dt><dd>{formatEuro(amounts.taxCents)}</dd></div>
+            <div><dt>Line subtotals</dt><dd>{amounts ? formatEuro(amounts.subtotalCents) : '—'}</dd></div>
+            <div><dt>Line discounts</dt><dd>−{amounts ? formatEuro(amounts.discountCents) : '—'}</dd></div>
+            <div><dt>Taxable amount</dt><dd>{amounts ? formatEuro(amounts.taxableCents) : '—'}</dd></div>
+            <div><dt>Sum of line taxes</dt><dd>{amounts ? formatEuro(amounts.taxCents) : '—'}</dd></div>
           </dl>
-          <div className="grand-total"><span>Document total</span><strong>{formatEuro(amounts.totalCents)}</strong></div>
+          <div className="grand-total"><span>Document total</span><strong>{amounts ? formatEuro(amounts.totalCents) : '—'}</strong></div>
           <p className="calculation-note">Tax is rounded for each line, then summed.</p>
           {!canEdit && <p className="snapshot-note">Finalized documents are fixed snapshots.</p>}
         </section>
