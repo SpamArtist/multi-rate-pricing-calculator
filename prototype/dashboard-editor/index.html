@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>Pricing documents · layout prototype</title>
+    <link rel="stylesheet" href="./prototype.css">
+  </head>
+  <body>
+    <!-- Three dashboard/editor variants, switchable through ?variant=A|B|C. Throwaway Wayfinder prototype. -->
+    <div id="app"></div>
+    <nav class="prototype-switcher" aria-label="Prototype variants">
+      <button type="button" id="variant-prev" aria-label="Previous variant">←</button>
+      <span id="variant-name" aria-live="polite"></span>
+      <button type="button" id="variant-next" aria-label="Next variant">→</button>
+    </nav>
+    <script type="module" src="./prototype.js"></script>
+  </body>
+</html>

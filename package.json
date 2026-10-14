@@ -1,0 +1,6 @@
+{
+  "private": true,
+  "scripts": {
+    "prototype": "node prototype/dashboard-editor/server.mjs"
+  }
+}
