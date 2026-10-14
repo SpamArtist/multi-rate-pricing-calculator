@@ -51,12 +51,21 @@ type DocumentData = DocumentSummary & {
   }>;
 };
 type FieldErrors = Record<string, string>;
+type PersistedEditorErrors = {
+  document: FieldErrors;
+  lines: Record<string, Partial<Record<EditableLineField, string>>>;
+  submitted: boolean;
+};
 type Route = { kind: 'dashboard' } | { kind: 'new' } | { kind: 'document'; id: string };
 
 const EDITOR_STORAGE_PREFIX = 'pricing-calculator:editor:';
 
 function lineStorageKey(ownerId: string, documentId?: string): string {
   return `${EDITOR_STORAGE_PREFIX}${ownerId}:${documentId ?? 'new'}:lines`;
+}
+
+function editorErrorsKey(ownerId: string, documentId?: string): string {
+  return `${EDITOR_STORAGE_PREFIX}${ownerId}:${documentId ?? 'new'}:errors`;
 }
 
 function newLineValues(): LineValues {
@@ -116,6 +125,34 @@ function storeEditorLines(ownerId: string, documentId: string | undefined, lines
   }
 }
 
+function readEditorErrors(ownerId: string, documentId?: string): PersistedEditorErrors | null {
+  try {
+    const stored = window.sessionStorage.getItem(editorErrorsKey(ownerId, documentId));
+    if (!stored) return null;
+    const value = JSON.parse(stored) as Partial<PersistedEditorErrors>;
+    if (!value.document || !value.lines || typeof value.submitted !== 'boolean') return null;
+    return value as PersistedEditorErrors;
+  } catch {
+    return null;
+  }
+}
+
+function storeEditorErrors(ownerId: string, documentId: string | undefined, errors: PersistedEditorErrors): void {
+  try {
+    window.sessionStorage.setItem(editorErrorsKey(ownerId, documentId), JSON.stringify(errors));
+  } catch {
+    // Live form state remains available when browser storage is unavailable.
+  }
+}
+
+function clearEditorErrors(ownerId: string, documentId?: string): void {
+  try {
+    window.sessionStorage.removeItem(editorErrorsKey(ownerId, documentId));
+  } catch {
+    // Nothing to clear when browser storage is unavailable.
+  }
+}
+
 function centsToInput(cents: number): string {
   return `${Math.floor(cents / 100)}.${String(cents % 100).padStart(2, '0')}`;
 }
@@ -152,6 +189,8 @@ type LinePreview = { errors: LineInputErrors; amounts?: Amounts; input?: {
 } };
 
 function previewLine(line: LineValues, useSnapshot = false): LinePreview {
+  if (useSnapshot && line.amounts) return { errors: {}, amounts: line.amounts };
+
   const errors: LineInputErrors = {};
   const quantity = parseQuantityInput(line.quantity);
   const unitPriceCents = parseMoneyInput(line.unitPrice);
@@ -174,7 +213,6 @@ function previewLine(line: LineValues, useSnapshot = false): LinePreview {
     errors.unitPrice = 'Line amounts exceed the supported safe integer range.';
   }
   if (Object.keys(errors).length > 0) return { errors };
-  if (useSnapshot && line.amounts) return { errors, input, amounts: line.amounts };
   return {
     errors,
     input,
@@ -258,6 +296,7 @@ function clearEditorValues(ownerId: string, documentId?: string): void {
   try {
     window.sessionStorage.removeItem(editorStorageKey(ownerId, documentId));
     window.sessionStorage.removeItem(lineStorageKey(ownerId, documentId));
+    clearEditorErrors(ownerId, documentId);
   } catch {
     // The server copy remains authoritative after a successful save.
   }
@@ -316,6 +355,37 @@ function lineFieldErrors(fields?: FieldErrors): Partial<Record<EditableLineField
     ...(fields.discountCents ? { discount: fields.discountCents } : {}),
     ...(fields.taxRateBasisPoints ? { taxRate: fields.taxRateBasisPoints } : {}),
   };
+}
+
+function splitFinalizationErrors(
+  fields: FieldErrors,
+  lines: LineValues[],
+): { document: FieldErrors; lines: Record<string, Partial<Record<EditableLineField, string>>> } {
+  const document: FieldErrors = {};
+  const lineErrors: Record<string, Partial<Record<EditableLineField, string>>> = {};
+  const fieldNames: Record<string, EditableLineField> = {
+    description: 'description',
+    quantity: 'quantity',
+    unitPriceCents: 'unitPrice',
+    discountCents: 'discount',
+    taxRateBasisPoints: 'taxRate',
+  };
+
+  for (const [path, message] of Object.entries(fields)) {
+    const match = /^lineItems\[(\d+)\]\.([A-Za-z]+)$/.exec(path);
+    if (!match) {
+      document[path] = message;
+      continue;
+    }
+    const line = lines[Number(match[1])];
+    const field = fieldNames[match[2]];
+    if (!line || !field) {
+      document[path] = message;
+      continue;
+    }
+    lineErrors[line.key] = { ...lineErrors[line.key], [field]: message };
+  }
+  return { document, lines: lineErrors };
 }
 
 function App(): React.JSX.Element {
@@ -695,6 +765,12 @@ function DocumentEditor({
           && (!recoveredLines || Boolean(line.id && recoveredLineIds.has(line.id))));
         const unsavedLines = recoveredLines?.filter(line => !line.id || !savedIds.has(line.id)) ?? [];
         setLines([...restoredSavedLines, ...remainingSavedLines, ...unsavedLines]);
+        const recoveredErrors = readEditorErrors(owner.id, documentId);
+        if (recoveredErrors) {
+          setServerErrors(recoveredErrors.document);
+          setServerLineErrors(recoveredErrors.lines);
+          setSubmitted(recoveredErrors.submitted);
+        }
         if (recoveredLines) {
           setRemovedLineIds(savedLines.flatMap(line => line.id && !recoveredLineIds.has(line.id) ? [line.id] : []));
         }
@@ -732,6 +808,8 @@ function DocumentEditor({
   })();
   const titleError = serverErrors.title ?? (submitted ? localErrors.title : undefined);
   const dateError = serverErrors.issueDate ?? (submitted ? localErrors.issueDate : undefined);
+  const customerError = serverErrors.customerName;
+  const lineItemsError = serverErrors.lineItems;
   const canEdit = !document || document.status === 'draft';
   const statusLabel = !document ? 'Unsaved document' : document.status === 'draft' ? 'Editable draft' : 'Fixed snapshot';
 
@@ -739,6 +817,7 @@ function DocumentEditor({
     const next = { ...values!, [field]: value };
     setValues(next);
     storeEditorValues(owner.id, documentId, next);
+    clearEditorErrors(owner.id, documentId);
     setServerErrors(current => {
       const updated = { ...current };
       delete updated[field];
@@ -751,6 +830,7 @@ function DocumentEditor({
     const next = lines.map(line => line.key === key ? { ...line, [field]: value } : line);
     setLines(next);
     storeEditorLines(owner.id, documentId, next);
+    clearEditorErrors(owner.id, documentId);
     setServerLineErrors(current => {
       const updated = { ...current };
       delete updated[key];
@@ -777,6 +857,7 @@ function DocumentEditor({
     const next = lines.filter(line => line.key !== key);
     setLines(next);
     storeEditorLines(owner.id, documentId, next);
+    clearEditorErrors(owner.id, documentId);
     setServerLineErrors(current => {
       const updated = { ...current };
       delete updated[key];
@@ -789,19 +870,25 @@ function DocumentEditor({
     const next = [...lines, newLineValues()];
     setLines(next);
     storeEditorLines(owner.id, documentId, next);
+    clearEditorErrors(owner.id, documentId);
+    setServerErrors(current => {
+      const updated = { ...current };
+      delete updated.lineItems;
+      return updated;
+    });
     setSubmitted(false);
     setMessage('');
   }
 
-  async function saveDraft(event: React.FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
+  async function saveDraft(finalizeAfterSave = false): Promise<void> {
     setSubmitted(true);
     setMessage('');
+    clearEditorErrors(owner.id, documentId);
     const errors = documentFieldErrors(values!);
     setServerErrors({});
     setServerLineErrors({});
     if (Object.keys(errors).length > 0) return;
-    if (hasLineErrors || !previewAmounts) {
+    if ((hasLineErrors || !previewAmounts) && !finalizeAfterSave) {
       setMessage(hasLineErrors ? 'Check line item fields before saving.' : 'Document amounts exceed the supported safe integer range.');
       return;
     }
@@ -913,16 +1000,95 @@ function DocumentEditor({
         }
       }
 
-      const detailResponse = await fetch(`/documents/${encodeURIComponent(saved.id)}`);
-      if (detailResponse.status === 401) {
-        onAuthExpired();
+      if (finalizeAfterSave && (hasLineErrors || !previewAmounts)) {
+        const detailResponse = await fetch(`/documents/${encodeURIComponent(saved.id)}`);
+        if (detailResponse.status === 401) {
+          onAuthExpired();
+          return;
+        }
+        if (!detailResponse.ok) {
+          setMessage('Draft saved, but could not refresh its server values. Reload to get current values.');
+          return;
+        }
+        const authoritative = await detailResponse.json() as DocumentData;
+        if (!documentId) clearEditorValues(owner.id);
+        setDocument(authoritative);
+        setValues({ title: authoritative.title, customerName: authoritative.customerName, issueDate: authoritative.issueDate });
+        setLines(linesBeingSaved);
+        setRemovedLineIds([]);
+        setServerLineErrors({});
+        setSubmitted(true);
+        setMessage(hasLineErrors ? 'Fix line item fields before finalizing. Draft saved.' : 'Draft saved. Correct amounts before finalizing.');
+        storeEditorValues(owner.id, saved.id, {
+          title: authoritative.title, customerName: authoritative.customerName, issueDate: authoritative.issueDate,
+        });
+        storeEditorLines(owner.id, saved.id, linesBeingSaved);
+        storeEditorErrors(owner.id, saved.id, { document: {}, lines: {}, submitted: true });
+        if (!documentId) navigate(`/documents/${encodeURIComponent(authoritative.id)}`);
         return;
       }
-      if (!detailResponse.ok) {
-        setMessage('Draft saved, but could not refresh its server totals. Reload to get current values.');
-        return;
+
+      let finalizedDocument: DocumentData | undefined;
+      if (finalizeAfterSave) {
+        const finalizeResponse = await fetch(`/documents/${encodeURIComponent(saved.id)}/finalize`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+        if (finalizeResponse.status === 401) {
+          onAuthExpired();
+          return;
+        }
+        if (!finalizeResponse.ok) {
+          const error = await responseError(finalizeResponse);
+          if (finalizeResponse.status === 422 && error.fields) {
+            const splitErrors = splitFinalizationErrors(error.fields, linesBeingSaved);
+            setServerErrors(splitErrors.document);
+            setServerLineErrors(splitErrors.lines);
+            storeEditorErrors(owner.id, saved.id, {
+              document: splitErrors.document,
+              lines: splitErrors.lines,
+              submitted: true,
+            });
+          }
+          const detailResponse = await fetch(`/documents/${encodeURIComponent(saved.id)}`);
+          if (detailResponse.status === 401) {
+            onAuthExpired();
+            return;
+          }
+          if (detailResponse.ok) {
+            const current = await detailResponse.json() as DocumentData;
+            if (!documentId) clearEditorValues(owner.id);
+            setDocument(current);
+            setValues({ title: current.title, customerName: current.customerName, issueDate: current.issueDate });
+            setLines(current.status === 'draft' ? linesBeingSaved : lineValuesFromDocument(current));
+            setRemovedLineIds([]);
+            storeEditorValues(owner.id, saved.id, {
+              title: current.title, customerName: current.customerName, issueDate: current.issueDate,
+            });
+            storeEditorLines(owner.id, saved.id, current.status === 'draft' ? linesBeingSaved : lineValuesFromDocument(current));
+          }
+          setSubmitted(true);
+          setMessage(error.message ?? 'Could not finalize this document. Your draft stays editable.');
+          if (!documentId) navigate(`/documents/${encodeURIComponent(saved.id)}`);
+          return;
+        }
+        finalizedDocument = await finalizeResponse.json() as DocumentData;
       }
-      const authoritative = await detailResponse.json() as DocumentData;
+
+      let authoritative = finalizedDocument;
+      if (!authoritative) {
+        const detailResponse = await fetch(`/documents/${encodeURIComponent(saved.id)}`);
+        if (detailResponse.status === 401) {
+          onAuthExpired();
+          return;
+        }
+        if (!detailResponse.ok) {
+          setMessage('Draft saved, but could not refresh its server totals. Reload to get current values.');
+          return;
+        }
+        authoritative = await detailResponse.json() as DocumentData;
+      }
       clearEditorValues(owner.id, documentId);
       clearEditorValues(owner.id, saved.id);
       setDocument(authoritative);
@@ -931,7 +1097,8 @@ function DocumentEditor({
       setRemovedLineIds([]);
       setServerLineErrors({});
       setSubmitted(false);
-      setMessage('Draft saved.');
+      setServerErrors({});
+      setMessage(finalizeAfterSave ? 'Document finalized. This snapshot cannot be changed.' : 'Draft saved.');
       if (!documentId) navigate(`/documents/${encodeURIComponent(authoritative.id)}`);
     } catch {
       setMessage('Connection failed. Your input is still here. Try again.');
@@ -952,7 +1119,7 @@ function DocumentEditor({
   return (
     <main className="ledger-page" data-testid="document-editor">
       <button className="back-link" type="button" onClick={() => navigate('/documents')}>← All documents</button>
-      <form className="document-form" noValidate onSubmit={event => void saveDraft(event)}>
+      <form className="document-form" noValidate onSubmit={event => { event.preventDefault(); void saveDraft(); }}>
         <header className="editor-heading">
           <div className="editor-title">
             <span className="section-label">{statusLabel}</span>
@@ -966,12 +1133,21 @@ function DocumentEditor({
             {canEdit && <button className="primary-button" type="submit" disabled={pending}>
               {pending ? 'Saving…' : documentId ? 'Save changes' : 'Save as draft'}
             </button>}
+            {canEdit && <button
+              className="secondary-button"
+              type="button"
+              disabled={pending}
+              onClick={() => void saveDraft(true)}
+            >{pending ? 'Finalizing…' : 'Finalize document'}</button>}
             <button className="secondary-button print-button" type="button" onClick={() => window.print()}>Print</button>
           </div>
         </header>
 
         {loadError && <p className="request-error" role="alert">{loadError}</p>}
-        {message && <p className={message === 'Draft saved.' ? 'success-message' : 'request-error'} role={message === 'Draft saved.' ? 'status' : 'alert'}>{message}</p>}
+        {message && <p
+          className={message === 'Draft saved.' || message.startsWith('Document finalized.') ? 'success-message' : 'request-error'}
+          role={message === 'Draft saved.' || message.startsWith('Document finalized.') ? 'status' : 'alert'}
+        >{message}</p>}
 
         <section className="metadata editor-section" aria-labelledby="metadata-heading">
           <div className="section-heading">
@@ -1001,8 +1177,11 @@ function DocumentEditor({
                 autoComplete="off"
                 value={values.customerName}
                 disabled={!canEdit}
+                aria-invalid={Boolean(customerError)}
+                aria-describedby={customerError ? 'customer-name-error' : undefined}
                 onChange={event => changeField('customerName', event.currentTarget.value)}
               />
+              {customerError && <p className="field-error" id="customer-name-error" role="alert">{customerError}</p>}
             </div>
             <div className="field">
               <label htmlFor="issue-date">Issue date</label>
@@ -1027,6 +1206,7 @@ function DocumentEditor({
             <span>02</span>
           </div>
           {lines.length === 0 && <p className="empty-lines">No line items yet. Drafts can be saved without lines.</p>}
+          {lineItemsError && <p className="field-error" role="alert">{lineItemsError}</p>}
           {lines.map((line, index) => {
             const preview = linePreviews[index];
             const field = (name: Exclude<EditableLineField, 'description'>, label: string, inputMode: 'numeric' | 'decimal'): React.JSX.Element => {

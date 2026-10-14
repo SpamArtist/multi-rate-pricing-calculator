@@ -246,7 +246,7 @@ function sendLineMutationState(
   return false;
 }
 
-function serializeLineItem(line: typeof lineItems.$inferSelect) {
+function serializeLineItem(line: typeof lineItems.$inferSelect, requireSnapshot = false) {
   return {
     id: line.id,
     position: line.position,
@@ -255,7 +255,7 @@ function serializeLineItem(line: typeof lineItems.$inferSelect) {
     unitPriceCents: toSafeNumber(line.unitPriceCents),
     discountCents: toSafeNumber(line.discountCents),
     taxRateBasisPoints: line.taxRateBasisPoints,
-    amounts: lineAmounts(line),
+    amounts: lineAmounts(line, requireSnapshot),
   };
 }
 
@@ -270,13 +270,16 @@ function inputLineAmounts(line: typeof lineItems.$inferSelect): Amounts {
   };
 }
 
-function lineAmounts(line: typeof lineItems.$inferSelect): Amounts {
+function lineAmounts(line: typeof lineItems.$inferSelect, requireSnapshot = false): Amounts {
   if (
     line.finalizedSubtotalCents === null
     || line.finalizedTaxableCents === null
     || line.finalizedTaxCents === null
     || line.finalizedTotalCents === null
-  ) return inputLineAmounts(line);
+  ) {
+    if (requireSnapshot) throw new RangeError('Finalized line snapshot is incomplete.');
+    return inputLineAmounts(line);
+  }
   return {
     subtotalCents: toSafeNumber(line.finalizedSubtotalCents),
     discountCents: toSafeNumber(line.discountCents),
@@ -308,7 +311,8 @@ async function serializeDocument(transaction: TenantTransaction, row: typeof doc
   const lines = await transaction.select().from(lineItems)
     .where(eq(lineItems.documentId, row.id))
     .orderBy(asc(lineItems.position), asc(lineItems.id));
-  const lineItemsResponse = lines.map(serializeLineItem);
+  const finalized = row.status === 'finalized';
+  const lineItemsResponse = lines.map(line => serializeLineItem(line, finalized));
 
   const calculated = lines.reduce((total, line) => {
     const amounts = lineAmounts(line);
@@ -319,7 +323,9 @@ async function serializeDocument(transaction: TenantTransaction, row: typeof doc
     total.totalCents += BigInt(amounts.totalCents);
     return total;
   }, { subtotalCents: 0n, discountCents: 0n, taxableCents: 0n, taxCents: 0n, totalCents: 0n });
-  const amounts = snapshotAmounts(row) ?? {
+  const persistedAmounts = snapshotAmounts(row);
+  if (finalized && !persistedAmounts) throw new RangeError('Finalized document snapshot is incomplete.');
+  const amounts = persistedAmounts ?? {
     subtotalCents: toSafeNumber(calculated.subtotalCents),
     discountCents: toSafeNumber(calculated.discountCents),
     taxableCents: toSafeNumber(calculated.taxableCents),
@@ -483,6 +489,152 @@ export function createDocumentsRouter(clock: Clock): Router {
         return;
       }
       response.status(200).json(document.document);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.delete('/:id', async (request, response, next) => {
+    if (!UUID_PATTERN.test(request.params.id)) {
+      sendNotFound(response);
+      return;
+    }
+
+    const ownerId = requestOwnerId(request);
+    try {
+      const result = await withTenantTransaction(ownerId, async transaction => {
+        const [current] = await transaction.select({ id: documents.id, status: documents.status })
+          .from(documents)
+          .where(eq(documents.id, request.params.id))
+          .for('update')
+          .limit(1);
+        if (!current) return { kind: 'missing' as const };
+        if (current.status !== 'draft') return { kind: 'finalized' as const };
+        await transaction.delete(documents).where(eq(documents.id, current.id));
+        return { kind: 'deleted' as const };
+      });
+      if (result.kind === 'missing') {
+        sendNotFound(response);
+        return;
+      }
+      if (result.kind === 'finalized') {
+        response.status(409).json({ error: { code: 'invalid_state', message: 'Finalized documents cannot be deleted.' } });
+        return;
+      }
+      response.status(204).end();
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post('/:id/finalize', json({ limit: '64kb' }), async (request, response, next) => {
+    const fields = Object.create(null) as Fields;
+    const declaredBodyLength = Number(request.get('content-length') ?? '0');
+    const hasUndecodedBody = request.body === undefined
+      && ((Number.isFinite(declaredBodyLength) && declaredBodyLength > 0) || Boolean(request.get('transfer-encoding')));
+    if (hasUndecodedBody) fields.body = 'Send an empty JSON object or omit the request body.';
+    if (request.body !== undefined) {
+      if (!isRecord(request.body)) {
+        fields.body = 'Send an empty object or omit the request body.';
+      } else {
+        for (const key of Object.keys(request.body)) fields[key] = 'This field is not allowed.';
+      }
+    }
+    if (Object.keys(fields).length > 0) {
+      sendValidation(response, fields);
+      return;
+    }
+    if (!UUID_PATTERN.test(request.params.id)) {
+      sendNotFound(response);
+      return;
+    }
+
+    const ownerId = requestOwnerId(request);
+    try {
+      const result = await withTenantTransaction(ownerId, async transaction => {
+        const [current] = await transaction.select().from(documents)
+          .where(eq(documents.id, request.params.id))
+          .for('update')
+          .limit(1);
+        if (!current) return { kind: 'missing' as const };
+        if (current.status !== 'draft') return { kind: 'finalized' as const };
+
+        const lines = await transaction.select().from(lineItems)
+          .where(eq(lineItems.documentId, current.id))
+          .orderBy(asc(lineItems.position), asc(lineItems.id));
+        const validationFields = Object.create(null) as Fields;
+        if (!current.customerName.trim()) validationFields.customerName = 'Enter a customer name.';
+        if (lines.length === 0) validationFields.lineItems = 'Add at least one line item.';
+
+        const snapshots = lines.map((line, index) => {
+          const input = databaseLineInput(line);
+          if (line.quantity > MAX_SAFE_AMOUNT) {
+            validationFields[`lineItems[${index}].quantity`] = 'Enter a positive whole quantity within the supported safe integer range.';
+          }
+          if (line.unitPriceCents > MAX_SAFE_AMOUNT) {
+            validationFields[`lineItems[${index}].unitPriceCents`] = 'Enter a nonnegative amount within the supported safe integer range.';
+          }
+          if (line.discountCents > MAX_SAFE_AMOUNT) {
+            validationFields[`lineItems[${index}].discountCents`] = 'Enter a nonnegative amount within the supported safe integer range.';
+          }
+          if (line.taxRateBasisPoints < 0 || line.taxRateBasisPoints > 10_000) {
+            validationFields[`lineItems[${index}].taxRateBasisPoints`] = 'Enter a tax rate from 0 to 10000 basis points.';
+          }
+          if (!input.description.trim()) {
+            validationFields[`lineItems[${index}].description`] = 'Enter a line description.';
+          }
+          const lineAmounts = calculateLineAmounts(input);
+          if (input.discountCents > lineAmounts.subtotalCents) {
+            validationFields[`lineItems[${index}].discountCents`] = 'Discount cannot exceed the line subtotal.';
+          }
+          if (!amountsWithinSafeRange(lineAmounts)) {
+            validationFields[`lineItems[${index}].unitPriceCents`] = 'Line amounts exceed the supported safe integer range.';
+          }
+          return { line, amounts: lineAmounts };
+        });
+        const documentAmounts = calculateDocumentAmounts(lines.map(databaseLineInput));
+        if (!amountsWithinSafeRange(documentAmounts)) {
+          validationFields.body = 'Document amounts exceed the supported safe integer range.';
+        }
+        if (Object.keys(validationFields).length > 0) return { kind: 'invalid' as const, fields: validationFields };
+
+        const finalizedAt = clock.now();
+        for (const { line, amounts } of snapshots) {
+          await transaction.update(lineItems).set({
+            finalizedSubtotalCents: amounts.subtotalCents,
+            finalizedTaxableCents: amounts.taxableCents,
+            finalizedTaxCents: amounts.taxCents,
+            finalizedTotalCents: amounts.totalCents,
+          }).where(eq(lineItems.id, line.id));
+        }
+        await transaction.update(documents).set({
+          status: 'finalized',
+          finalizedAt,
+          updatedAt: finalizedAt,
+          finalizedSubtotalCents: documentAmounts.subtotalCents,
+          finalizedDiscountCents: documentAmounts.discountCents,
+          finalizedTaxableCents: documentAmounts.taxableCents,
+          finalizedTaxCents: documentAmounts.taxCents,
+          finalizedTotalCents: documentAmounts.totalCents,
+        }).where(eq(documents.id, current.id));
+        const [updated] = await transaction.select().from(documents)
+          .where(eq(documents.id, current.id))
+          .limit(1);
+        return { kind: 'completed' as const, document: await serializeDocument(transaction, updated) };
+      });
+      if (result.kind === 'missing') {
+        sendNotFound(response);
+        return;
+      }
+      if (result.kind === 'finalized') {
+        response.status(409).json({ error: { code: 'invalid_state', message: 'Document is already finalized.' } });
+        return;
+      }
+      if (result.kind === 'completed') {
+        response.status(200).json(result.document);
+        return;
+      }
+      sendValidation(response, result.fields);
     } catch (error) {
       next(error);
     }

@@ -102,6 +102,93 @@ test('starts locally, saves a draft, reopens from Documents, and verifies persis
   }
 });
 
+test('saves incomplete new document, repairs it, finalizes snapshot, and reloads disabled inputs', async ({ page }) => {
+  const email = `finalize-ui-${randomUUID()}@example.com`;
+  const password = 'A🔐b$cD';
+  try {
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Create account' }).click();
+    await page.getByLabel('Email address').fill(email);
+    await page.getByLabel('Password').fill(password);
+    await page.getByRole('button', { name: 'Create account' }).click();
+    await expect(page.getByRole('heading', { name: 'Documents', exact: true })).toBeVisible();
+
+    await page.getByRole('button', { name: 'New document' }).click();
+    await page.getByLabel('Document name').fill('Brand workshop');
+    await page.getByRole('button', { name: 'Add line item' }).click();
+    const firstLine = page.getByTestId('line-item').nth(0);
+    await firstLine.getByLabel('Qty').fill('3');
+    await firstLine.getByLabel('Unit price €').fill('19.99');
+    await firstLine.getByLabel('Discount €').fill('10.00');
+    await firstLine.getByLabel('Tax %').fill('19.00');
+    await page.getByRole('button', { name: 'Add line item' }).click();
+    const secondLine = page.getByTestId('line-item').nth(1);
+    await secondLine.getByLabel('Line description').fill('Print-ready files');
+    await secondLine.getByLabel('Qty').fill('2');
+    await secondLine.getByLabel('Unit price €').fill('2.50');
+    await secondLine.getByLabel('Tax %').fill('7.50');
+
+    await page.getByRole('button', { name: 'Finalize document' }).click();
+    await expect(page).toHaveURL(/#\/documents\/[0-9a-f-]+$/i);
+    const documentId = new URL(page.url()).hash.split('/').at(-1)!;
+    await expect(page.getByLabel('Customer name')).toHaveAttribute('aria-invalid', 'true');
+    await expect(page.getByText('Enter a customer name.')).toBeVisible();
+    await expect(firstLine.getByLabel('Line description')).toHaveAttribute('aria-invalid', 'true');
+    await expect(page.getByText('Enter a line description.')).toBeVisible();
+    await expect(page.getByLabel('Document name')).toHaveValue('Brand workshop');
+    await expect(firstLine.getByLabel('Unit price €')).toHaveValue('19.99');
+
+    const draftResponse = await page.context().request.get(new URL(`/documents/${documentId}`, page.url()).toString());
+    expect(draftResponse.status()).toBe(200);
+    const draft = await draftResponse.json() as { status: string; lineItems: unknown[] };
+    expect(draft).toMatchObject({ status: 'draft', lineItems: [{}, {}] });
+
+    await page.getByLabel('Customer name').fill('Alpen Studio');
+    await firstLine.getByLabel('Line description').fill('Brand workshop');
+    await page.getByRole('button', { name: 'Finalize document' }).click();
+    await expect(page.getByText('Document finalized. This snapshot cannot be changed.')).toBeVisible();
+    await expect(page.getByLabel('Document name')).toBeDisabled();
+    await expect(page.getByLabel('Customer name')).toBeDisabled();
+    await expect(page.getByLabel('Issue date')).toBeDisabled();
+    await expect(page.getByLabel('Line description').nth(0)).toBeDisabled();
+    await expect(page.getByLabel('Unit price €').nth(1)).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Finalize document' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Save changes' })).toHaveCount(0);
+
+    await page.reload();
+    await expect(page.getByText('Fixed snapshot', { exact: true })).toBeVisible();
+    await expect(page.getByLabel('Document name')).toHaveValue('Brand workshop');
+    await expect(page.getByLabel('Document name')).toBeDisabled();
+    await expect(page.getByLabel('Customer name')).toHaveValue('Alpen Studio');
+    await expect(page.getByLabel('Customer name')).toBeDisabled();
+    await expect(page.getByTestId('line-item')).toHaveCount(2);
+    await expect(page.getByLabel('Line description').nth(0)).toHaveValue('Brand workshop');
+    await expect(page.getByLabel('Line description').nth(0)).toBeDisabled();
+    await expect(page.locator('.grand-total')).toContainText('64.84');
+
+    const snapshotResponse = await page.context().request.get(new URL(`/documents/${documentId}`, page.url()).toString());
+    expect(snapshotResponse.status()).toBe(200);
+    const snapshot = await snapshotResponse.json() as {
+      status: string; finalizedAt: string | null;
+      lineItems: Array<{ amounts: Record<string, number> }>;
+      amounts: Record<string, number>;
+    };
+    expect(snapshot).toMatchObject({
+      status: 'finalized', finalizedAt: expect.any(String),
+      lineItems: [
+        { amounts: { subtotalCents: 5997, discountCents: 1000, taxableCents: 4997, taxCents: 949, totalCents: 5946 } },
+        { amounts: { subtotalCents: 500, discountCents: 0, taxableCents: 500, taxCents: 38, totalCents: 538 } },
+      ],
+      amounts: { subtotalCents: 6497, discountCents: 1000, taxableCents: 5497, taxCents: 987, totalCents: 6484 },
+    });
+    await test.info().attach('issue-17-finalized-snapshot.json', {
+      body: JSON.stringify(snapshot, null, 2), contentType: 'application/json',
+    });
+  } finally {
+    await migrationPool.query('DELETE FROM users WHERE email_canonical = $1', [email.toLowerCase()]);
+  }
+});
+
 test('adds priced line items, previews exact arithmetic, and reloads server totals', async ({ page }) => {
   const email = `line-pricing-${randomUUID()}@example.com`;
   const password = 'A🔐b$cD';

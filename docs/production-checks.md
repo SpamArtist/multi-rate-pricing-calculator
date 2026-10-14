@@ -1,6 +1,6 @@
 # Production check scaffold
 
-This repository keeps the approved in-memory design prototype separate from the production seams. Production checks use a TypeScript API, React app, Drizzle migrations, and real PostgreSQL. They establish health, role separation, tenant isolation, authentication, draft-document flows, authoritative line pricing, and draft line editing, removal, and reordering. Finalization remains future work.
+This repository keeps the approved in-memory design prototype separate from the production seams. Production checks use a TypeScript API, React app, Drizzle migrations, and real PostgreSQL. They establish health, role separation, tenant isolation, authentication, draft-document flows, authoritative line pricing, draft line editing, removal, reordering, and immutable finalized snapshots.
 
 ## One-command local setup
 
@@ -73,3 +73,12 @@ Verified 2026-10-14 for issue #16 on `LLM/issue-16-line-mutations`:
 - Public HTTP coverage inserts at beginning, middle, and end; verifies ordered detail and stable IDs after each mutation; moves in both directions; partially edits; deletes and renumbers; rejects invalid/empty/unknown patches, out-of-range positions, discount-over-subtotal after partial edits, and unsafe aggregate totals without changing saved values.
 - Ownership tests return identical `404` for foreign/missing parent and line IDs. A finalized row seeded directly under the fixture owner returns `409` for insert, patch, and delete without changing its snapshot. Finalization route remains out of scope for issue #16.
 - Playwright edits a saved price, retains invalid `1.239` input and field error across reload, confirms API data unchanged, moves a line, removes another, reloads, and verifies stable IDs, order, contiguous positions, and persisted price. It also verifies 390px layout has no horizontal overflow. Attachments: `issue-16-after-move.json`, `issue-16-persisted-document.json`, `issue-16-editor-desktop.png`, and `issue-16-editor-mobile.png`.
+
+Verified 2026-10-14 for issue #17 on `LLM/issue-17-finalization`:
+
+- `npm run check` — exit 0. Typecheck and lint passed; API checks passed 7 files / 31 tests; DB checks passed 1 file / 7 tests; Playwright passed 10 tests.
+- `npm run build` — exit 0; Vite built the React editor and esbuild bundled the API.
+- Public HTTP finalization coverage checks combined missing-customer/no-line errors, blank descriptions, unsafe persisted numeric input, draft recovery after `422`, exact €64.84 line and document snapshots, and `409 invalid_state` for metadata PATCH, line insert/PATCH/delete, document DELETE, and repeat finalize. Foreign and missing finalize/delete IDs return identical `404` responses; client-controlled finalize fields return `422`.
+- A forced PostgreSQL trigger failure on the first line snapshot write returns `500` and rolls back every line and document snapshot field; the draft remains editable. A concurrent line-price PATCH/finalize race returns either a serialized `200` edit reflected in the snapshot or `409` after finalization, with no mixed amount state.
+- Frozen-read coverage changes a finalized line's tax-rate input directly under the owner test transaction, then verifies GET still returns the stored per-line and document amounts. Finalized reads reject incomplete snapshots instead of falling back to calculator code.
+- Playwright creates an unsaved document with valid prices but missing customer and line description, clicks Finalize, verifies both field errors and retained values on the saved draft, repairs fields, finalizes, reloads, verifies inputs/actions disabled, and checks the persisted API snapshot. Attachment: `issue-17-finalized-snapshot.json`.
