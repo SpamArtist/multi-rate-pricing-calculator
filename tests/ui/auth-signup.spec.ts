@@ -32,10 +32,10 @@ test('registration form shows inline validation, then opens private workspace', 
     await passwordField.fill('A🔐b$cD');
     await expect(passwordField).toHaveAttribute('aria-invalid', 'false');
     await page.getByRole('button', { name: 'Create account' }).click();
-    await expect(page.getByRole('heading', { name: `Welcome, ${email}` })).toBeVisible();
-    await expect(page.getByText('Your private pricing workspace is ready.')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Documents', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'New document' })).toBeVisible();
     await page.reload();
-    await expect(page.getByRole('heading', { name: `Welcome, ${email}` })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Documents', exact: true })).toBeVisible();
   } finally {
     await migrationPool.query('DELETE FROM users WHERE email_canonical = $1', [email.toLowerCase()]);
   }
@@ -85,20 +85,20 @@ test('sign-in survives reload, device logout stays independent, and expiry retur
     await page.getByLabel('Email address').fill(email);
     await page.getByLabel('Password').fill(password);
     await page.getByRole('button', { name: 'Sign in' }).click();
-    await expect(page.getByRole('heading', { name: `Welcome, ${email}` })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Documents', exact: true })).toBeVisible();
     await page.reload();
-    await expect(page.getByRole('heading', { name: `Welcome, ${email}` })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Documents', exact: true })).toBeVisible();
 
     await secondPage.goto(webOrigin);
     await secondPage.getByLabel('Email address').fill(email);
     await secondPage.getByLabel('Password').fill(password);
     await secondPage.getByRole('button', { name: 'Sign in' }).click();
-    await expect(secondPage.getByRole('heading', { name: `Welcome, ${email}` })).toBeVisible();
+    await expect(secondPage.getByRole('heading', { name: 'Documents', exact: true })).toBeVisible();
 
     await page.getByRole('button', { name: 'Sign out' }).click();
     await expect(page.getByRole('heading', { name: 'Sign in to your workspace' })).toBeVisible();
     await secondPage.reload();
-    await expect(secondPage.getByRole('heading', { name: `Welcome, ${email}` })).toBeVisible();
+    await expect(secondPage.getByRole('heading', { name: 'Documents', exact: true })).toBeVisible();
 
     const sessionCookie = (await secondContext.cookies()).find(cookie => cookie.name === '__Host-session');
     expect(sessionCookie).toBeDefined();
@@ -109,7 +109,6 @@ test('sign-in survives reload, device logout stays independent, and expiry retur
     );
     await secondPage.reload();
     await expect(secondPage.getByRole('heading', { name: 'Sign in to your workspace' })).toBeVisible();
-    // No document editor exists yet, so there is no unsaved editor input for expiry recovery to restore.
   } finally {
     await secondContext.close();
     await migrationPool.query('DELETE FROM users WHERE id = $1', [id]);

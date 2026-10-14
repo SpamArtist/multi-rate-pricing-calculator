@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import argon2 from 'argon2';
 import { eq, sql } from 'drizzle-orm';
 import { json, Router, type Request, type RequestHandler } from 'express';
-import { db } from '../db/client.js';
+import { db, type AuthenticatedOwnerId } from '../db/client.js';
 import { sessions, users } from '../db/schema.js';
 import { trimUnicodeWhitespace, validateRegistrationFields } from '../shared/auth-validation.js';
 import { type Clock } from './clock.js';
@@ -132,6 +132,29 @@ function readSessionToken(cookieHeader: string | undefined): string | undefined 
     return /^[A-Za-z0-9_-]{40,64}$/.test(token) ? token : undefined;
   }
   return undefined;
+}
+
+/** Refresh a cookie session and return its trusted owner identity for tenant routes. */
+export async function authenticatedOwnerId(request: Request, clock: Clock): Promise<AuthenticatedOwnerId | undefined> {
+  const token = readSessionToken(request.headers.cookie);
+  if (!token) return undefined;
+
+  const tokenHash = createHash('sha256').update(token).digest('hex');
+  const now = clock.now();
+  const refreshed = await db.execute<{ user_id: string }>(sql`
+    UPDATE sessions
+    SET last_activity_at = GREATEST(last_activity_at, ${now})
+    WHERE token_hash = ${tokenHash}
+      AND last_activity_at > ${new Date(now.getTime() - SESSION_IDLE_MS)}
+      AND expires_at > ${now}
+    RETURNING user_id
+  `);
+  const ownerId = refreshed.rows[0]?.user_id;
+  if (!ownerId) {
+    await db.delete(sessions).where(eq(sessions.tokenHash, tokenHash));
+    return undefined;
+  }
+  return ownerId as AuthenticatedOwnerId;
 }
 
 function isEmailUniqueConflict(error: unknown): boolean {

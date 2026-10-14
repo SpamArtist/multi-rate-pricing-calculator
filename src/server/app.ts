@@ -2,6 +2,7 @@ import express, { type Express } from 'express';
 import { resolve } from 'node:path';
 import { checkDatabase } from '../db/client.js';
 import { createAuthRouter, requireSameOriginForCookieMutations, type SigninRateLimitOptions, type SignupRateLimitOptions } from './auth.js';
+import { createDocumentsRouter } from './documents.js';
 import { systemClock, type Clock } from './clock.js';
 
 export type DatabaseCheck = () => Promise<void>;
@@ -20,6 +21,7 @@ export function createApp(
 
   app.use(requireSameOriginForCookieMutations);
   app.use('/auth', createAuthRouter(clock, options.signupRateLimit, options.signinRateLimit));
+  app.use('/documents', createDocumentsRouter(clock));
 
   app.get('/health', async (_request, response) => {
     try {
