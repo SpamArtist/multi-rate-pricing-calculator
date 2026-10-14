@@ -151,7 +151,7 @@ type LinePreview = { errors: LineInputErrors; amounts?: Amounts; input?: {
   taxRateBasisPoints: number;
 } };
 
-function previewLine(line: LineValues): LinePreview {
+function previewLine(line: LineValues, useSnapshot = false): LinePreview {
   const errors: LineInputErrors = {};
   const quantity = parseQuantityInput(line.quantity);
   const unitPriceCents = parseMoneyInput(line.unitPrice);
@@ -174,7 +174,7 @@ function previewLine(line: LineValues): LinePreview {
     errors.unitPrice = 'Line amounts exceed the supported safe integer range.';
   }
   if (Object.keys(errors).length > 0) return { errors };
-  if (line.id && line.amounts) return { errors, input, amounts: line.amounts };
+  if (useSnapshot && line.amounts) return { errors, input, amounts: line.amounts };
   return {
     errors,
     input,
@@ -305,6 +305,17 @@ async function responseError(response: Response): Promise<{ message?: string; fi
   } catch {
     return {};
   }
+}
+
+function lineFieldErrors(fields?: FieldErrors): Partial<Record<EditableLineField, string>> {
+  if (!fields) return {};
+  return {
+    ...(fields.description ? { description: fields.description } : {}),
+    ...(fields.quantity ? { quantity: fields.quantity } : {}),
+    ...(fields.unitPriceCents ? { unitPrice: fields.unitPriceCents } : {}),
+    ...(fields.discountCents ? { discount: fields.discountCents } : {}),
+    ...(fields.taxRateBasisPoints ? { taxRate: fields.taxRateBasisPoints } : {}),
+  };
 }
 
 function App(): React.JSX.Element {
@@ -639,9 +650,11 @@ function DocumentEditor({
     ? null
     : readEditorValues(owner.id) ?? { title: '', customerName: '', issueDate: localToday() });
   const [lines, setLines] = React.useState<LineValues[]>(() => documentId ? [] : readEditorLines(owner.id) ?? []);
+  const [removedLineIds, setRemovedLineIds] = React.useState<string[]>([]);
   const [loading, setLoading] = React.useState(Boolean(documentId));
   const [loadError, setLoadError] = React.useState('');
   const [serverErrors, setServerErrors] = React.useState<FieldErrors>({});
+  const [serverLineErrors, setServerLineErrors] = React.useState<Record<string, Partial<Record<EditableLineField, string>>>>({});
   const [message, setMessage] = React.useState('');
   const [submitted, setSubmitted] = React.useState(false);
   const [pending, setPending] = React.useState(false);
@@ -670,8 +683,21 @@ function DocumentEditor({
         const savedLines = lineValuesFromDocument(result);
         const recoveredLines = readEditorLines(owner.id, documentId);
         const savedIds = new Set(savedLines.map(line => line.id));
+        const recoveredLineIds = new Set(recoveredLines?.flatMap(line => line.id ? [line.id] : []) ?? []);
+        const recoveredSavedLines = recoveredLines?.filter(line => line.id && savedIds.has(line.id)) ?? [];
+        const savedById = new Map(savedLines.flatMap(line => line.id ? [[line.id, line] as const] : []));
+        const restoredSavedLines = recoveredSavedLines.flatMap(line => {
+          const saved = savedById.get(line.id!);
+          return saved ? [{ ...saved, ...line, amounts: saved.amounts }] : [];
+        });
+        const restoredSavedIds = new Set(restoredSavedLines.map(line => line.id));
+        const remainingSavedLines = savedLines.filter(line => !restoredSavedIds.has(line.id)
+          && (!recoveredLines || Boolean(line.id && recoveredLineIds.has(line.id))));
         const unsavedLines = recoveredLines?.filter(line => !line.id || !savedIds.has(line.id)) ?? [];
-        setLines([...savedLines, ...unsavedLines]);
+        setLines([...restoredSavedLines, ...remainingSavedLines, ...unsavedLines]);
+        if (recoveredLines) {
+          setRemovedLineIds(savedLines.flatMap(line => line.id && !recoveredLineIds.has(line.id) ? [line.id] : []));
+        }
       })
       .catch((reason: unknown) => {
         if (active) setLoadError(reason instanceof Error ? reason.message : 'Could not load this document.');
@@ -690,7 +716,7 @@ function DocumentEditor({
   }
 
   const localErrors = documentFieldErrors(values);
-  const linePreviews = lines.map(previewLine);
+  const linePreviews = lines.map(line => previewLine(line, document?.status === 'finalized'));
   const hasLineErrors = linePreviews.some(preview => Object.keys(preview.errors).length > 0);
   const previewAmounts = (() => {
     if (hasLineErrors) return undefined;
@@ -722,9 +748,40 @@ function DocumentEditor({
   }
 
   function changeLine(key: string, field: EditableLineField, value: string): void {
-    const next = lines.map(line => line.key === key && !line.id ? { ...line, [field]: value } : line);
+    const next = lines.map(line => line.key === key ? { ...line, [field]: value } : line);
     setLines(next);
     storeEditorLines(owner.id, documentId, next);
+    setServerLineErrors(current => {
+      const updated = { ...current };
+      delete updated[key];
+      return updated;
+    });
+    setMessage('');
+  }
+
+  function moveLine(key: string, direction: -1 | 1): void {
+    const index = lines.findIndex(line => line.key === key);
+    const target = index + direction;
+    if (index < 0 || target < 0 || target >= lines.length) return;
+    const next = [...lines];
+    [next[index], next[target]] = [next[target], next[index]];
+    setLines(next);
+    storeEditorLines(owner.id, documentId, next);
+    setMessage('');
+  }
+
+  function removeLine(key: string): void {
+    const removed = lines.find(line => line.key === key);
+    if (!removed) return;
+    if (removed.id) setRemovedLineIds(current => current.includes(removed.id!) ? current : [...current, removed.id!]);
+    const next = lines.filter(line => line.key !== key);
+    setLines(next);
+    storeEditorLines(owner.id, documentId, next);
+    setServerLineErrors(current => {
+      const updated = { ...current };
+      delete updated[key];
+      return updated;
+    });
     setMessage('');
   }
 
@@ -742,6 +799,7 @@ function DocumentEditor({
     setMessage('');
     const errors = documentFieldErrors(values!);
     setServerErrors({});
+    setServerLineErrors({});
     if (Object.keys(errors).length > 0) return;
     if (hasLineErrors || !previewAmounts) {
       setMessage(hasLineErrors ? 'Check line item fields before saving.' : 'Document amounts exceed the supported safe integer range.');
@@ -807,6 +865,54 @@ function DocumentEditor({
         storeEditorLines(owner.id, saved.id, linesBeingSaved);
       }
 
+      for (const [index, line] of linesBeingSaved.entries()) {
+        if (!line.id) continue;
+        const preview = linePreviews[index];
+        if (!preview.input) continue;
+        const lineResponse = await fetch(`/documents/${encodeURIComponent(saved.id)}/line-items/${encodeURIComponent(line.id)}`, {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            description: line.description,
+            quantity: Number(preview.input.quantity),
+            unitPriceCents: Number(preview.input.unitPriceCents),
+            discountCents: Number(preview.input.discountCents),
+            taxRateBasisPoints: preview.input.taxRateBasisPoints,
+            position: index + 1,
+          }),
+        });
+        if (lineResponse.status === 401) {
+          onAuthExpired();
+          return;
+        }
+        if (!lineResponse.ok) {
+          const error = await responseError(lineResponse);
+          setServerLineErrors(current => ({ ...current, [line.key]: lineFieldErrors(error.fields) }));
+          setMessage(error.message ?? 'Could not save a line item. Your input is still here.');
+          storeEditorLines(owner.id, saved.id, linesBeingSaved);
+          if (!documentId) navigate(`/documents/${encodeURIComponent(saved.id)}`);
+          return;
+        }
+        storeEditorLines(owner.id, saved.id, linesBeingSaved);
+      }
+
+      for (const removedId of removedLineIds) {
+        const lineResponse = await fetch(`/documents/${encodeURIComponent(saved.id)}/line-items/${encodeURIComponent(removedId)}`, {
+          method: 'DELETE',
+        });
+        if (lineResponse.status === 401) {
+          onAuthExpired();
+          return;
+        }
+        if (!lineResponse.ok && lineResponse.status !== 404) {
+          const error = await responseError(lineResponse);
+          setMessage(error.message ?? 'Could not remove a line item. Your other input is still here.');
+          storeEditorLines(owner.id, saved.id, linesBeingSaved);
+          if (!documentId) navigate(`/documents/${encodeURIComponent(saved.id)}`);
+          return;
+        }
+      }
+
       const detailResponse = await fetch(`/documents/${encodeURIComponent(saved.id)}`);
       if (detailResponse.status === 401) {
         onAuthExpired();
@@ -822,6 +928,8 @@ function DocumentEditor({
       setDocument(authoritative);
       setValues({ title: authoritative.title, customerName: authoritative.customerName, issueDate: authoritative.issueDate });
       setLines(lineValuesFromDocument(authoritative));
+      setRemovedLineIds([]);
+      setServerLineErrors({});
       setSubmitted(false);
       setMessage('Draft saved.');
       if (!documentId) navigate(`/documents/${encodeURIComponent(authoritative.id)}`);
@@ -839,7 +947,7 @@ function DocumentEditor({
 
   const amounts = document?.status === 'finalized'
     ? document.amounts
-    : lines.some(line => !line.id) ? previewAmounts : document?.amounts ?? previewAmounts;
+    : previewAmounts;
 
   return (
     <main className="ledger-page" data-testid="document-editor">
@@ -922,7 +1030,8 @@ function DocumentEditor({
           {lines.map((line, index) => {
             const preview = linePreviews[index];
             const field = (name: Exclude<EditableLineField, 'description'>, label: string, inputMode: 'numeric' | 'decimal'): React.JSX.Element => {
-              const error = submitted ? preview.errors[name as keyof LineInputErrors] : undefined;
+              const error = serverLineErrors[line.key]?.[name]
+                ?? (submitted ? preview.errors[name as keyof LineInputErrors] : undefined);
               const inputId = `line-${line.key}-${name}`;
               const errorId = `${inputId}-error`;
               return (
@@ -933,7 +1042,7 @@ function DocumentEditor({
                     inputMode={inputMode}
                     autoComplete="off"
                     value={line[name]}
-                    disabled={!canEdit || Boolean(line.id) || pending}
+                    disabled={!canEdit || pending}
                     aria-invalid={Boolean(error)}
                     aria-describedby={error ? errorId : undefined}
                     onChange={event => changeLine(line.key, name, event.currentTarget.value)}
@@ -952,10 +1061,36 @@ function DocumentEditor({
                       id={`line-${line.key}-description`}
                       placeholder="Item or service"
                       value={line.description}
-                      disabled={!canEdit || Boolean(line.id) || pending}
+                      disabled={!canEdit || pending}
+                      aria-invalid={Boolean(serverLineErrors[line.key]?.description)}
+                      aria-describedby={serverLineErrors[line.key]?.description ? `line-${line.key}-description-error` : undefined}
                       onChange={event => changeLine(line.key, 'description', event.currentTarget.value)}
                     />
+                    {serverLineErrors[line.key]?.description && <p className="field-error" id={`line-${line.key}-description-error`} role="alert">{serverLineErrors[line.key].description}</p>}
                   </div>
+                  {canEdit && <div className="line-actions" aria-label={`Line ${index + 1} actions`}>
+                    <button
+                      className="line-action"
+                      type="button"
+                      aria-label={`Move line ${index + 1} up`}
+                      disabled={pending || index === 0}
+                      onClick={() => moveLine(line.key, -1)}
+                    >↑</button>
+                    <button
+                      className="line-action"
+                      type="button"
+                      aria-label={`Move line ${index + 1} down`}
+                      disabled={pending || index === lines.length - 1}
+                      onClick={() => moveLine(line.key, 1)}
+                    >↓</button>
+                    <button
+                      className="line-action remove-line"
+                      type="button"
+                      aria-label={`Remove line ${index + 1}`}
+                      disabled={pending}
+                      onClick={() => removeLine(line.key)}
+                    >×</button>
+                  </div>}
                 </div>
                 <div className="line-fields">
                   {field('quantity', 'Qty', 'numeric')}

@@ -507,9 +507,38 @@ button:active:not(:disabled) {
 
 .line-header {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 0.65rem;
+}
+
+.line-actions {
+  display: flex;
+  align-items: center;
+  justify-content: end;
+  gap: 0.2rem;
+}
+
+.line-action {
+  min-inline-size: 2.75rem;
+  min-block-size: 2.75rem;
+  padding: 0.35rem;
+  border: 1px solid var(--line);
+  border-radius: 0.35rem;
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.line-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.remove-line:not(:disabled) {
+  color: var(--danger);
 }
 
 .line-index {
@@ -716,6 +745,10 @@ button:active:not(:disabled) {
 
   .add-line:hover {
     color: var(--accent);
+  }
+
+  .line-action:hover:not(:disabled) {
+    background: var(--page);
   }
 }
 

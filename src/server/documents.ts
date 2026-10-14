@@ -45,6 +45,10 @@ type ParsedLineValues = Partial<{
 }>;
 
 type CompleteLineInput = LinePricingInput & { description: string };
+type DraftLineMutation =
+  | { kind: 'missing' }
+  | { kind: 'finalized' }
+  | { kind: 'draft'; documentId: string; lines: (typeof lineItems.$inferSelect)[] };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -181,6 +185,65 @@ function lineValidation(input: CompleteLineInput): Fields {
     fields.body = 'Line amounts exceed the supported safe integer range.';
   }
   return fields;
+}
+
+async function lockDraftLines(transaction: TenantTransaction, documentId: string): Promise<DraftLineMutation> {
+  const [parent] = await transaction.select({ id: documents.id, status: documents.status })
+    .from(documents)
+    .where(eq(documents.id, documentId))
+    .for('update')
+    .limit(1);
+  if (!parent) return { kind: 'missing' };
+  if (parent.status !== 'draft') return { kind: 'finalized' };
+
+  const lines = await transaction.select().from(lineItems)
+    .where(eq(lineItems.documentId, parent.id))
+    .orderBy(asc(lineItems.position), asc(lineItems.id));
+  return { kind: 'draft', documentId: parent.id, lines };
+}
+
+async function moveLinePosition(
+  transaction: TenantTransaction,
+  lines: (typeof lineItems.$inferSelect)[],
+  lineId: string,
+  newPosition: number,
+): Promise<void> {
+  const line = lines.find(item => item.id === lineId);
+  if (!line || line.position === newPosition) return;
+
+  const temporaryPosition = lines.length + 1;
+  await transaction.update(lineItems).set({ position: temporaryPosition }).where(eq(lineItems.id, line.id));
+
+  if (line.position < newPosition) {
+    const shifted = lines.filter(item => item.position > line.position && item.position <= newPosition)
+      .sort((left, right) => left.position - right.position);
+    for (const item of shifted) {
+      await transaction.update(lineItems).set({ position: item.position - 1 }).where(eq(lineItems.id, item.id));
+    }
+  } else {
+    const shifted = lines.filter(item => item.position >= newPosition && item.position < line.position)
+      .sort((left, right) => right.position - left.position);
+    for (const item of shifted) {
+      await transaction.update(lineItems).set({ position: item.position + 1 }).where(eq(lineItems.id, item.id));
+    }
+  }
+
+  await transaction.update(lineItems).set({ position: newPosition }).where(eq(lineItems.id, line.id));
+}
+
+function sendLineMutationState(
+  response: Parameters<RequestHandler>[1],
+  result: { kind: string },
+): result is { kind: 'missing' | 'finalized' } {
+  if (result.kind === 'missing') {
+    sendNotFound(response);
+    return true;
+  }
+  if (result.kind === 'finalized') {
+    response.status(409).json({ error: { code: 'invalid_state', message: 'Finalized documents cannot be edited.' } });
+    return true;
+  }
+  return false;
 }
 
 function serializeLineItem(line: typeof lineItems.$inferSelect) {
@@ -446,17 +509,13 @@ export function createDocumentsRouter(clock: Clock): Router {
     const ownerId = requestOwnerId(request);
     try {
       const result = await withTenantTransaction(ownerId, async transaction => {
-        const [parent] = await transaction.select({ id: documents.id, status: documents.status })
-          .from(documents)
-          .where(eq(documents.id, request.params.id))
-          .for('update')
-          .limit(1);
-        if (!parent) return { kind: 'missing' as const };
-        if (parent.status !== 'draft') return { kind: 'finalized' as const };
+        const locked = await lockDraftLines(transaction, request.params.id);
+        if (locked.kind !== 'draft') return locked;
 
-        const existing = await transaction.select().from(lineItems)
-          .where(eq(lineItems.documentId, parent.id))
-          .orderBy(asc(lineItems.position), asc(lineItems.id));
+        const existing = locked.lines;
+        if (existing.length >= MAX_DATABASE_INTEGER) {
+          return { kind: 'invalid' as const, fields: { position: 'This draft cannot contain more line items.' } as Fields };
+        }
         const requestedPosition = parsed.values!.position ?? existing.length + 1;
         if (requestedPosition > existing.length + 1) {
           return { kind: 'invalid' as const, fields: { position: 'Position must be between 1 and the next line.' } as Fields };
@@ -474,30 +533,130 @@ export function createDocumentsRouter(clock: Clock): Router {
           INSERT INTO line_items (
             document_id, position, description, quantity, unit_price_cents, discount_cents, tax_rate_basis_points
           ) VALUES (
-            ${parent.id}, ${requestedPosition}, ${input.description}, ${input.quantity}, ${input.unitPriceCents},
+            ${locked.documentId}, ${requestedPosition}, ${input.description}, ${input.quantity}, ${input.unitPriceCents},
             ${input.discountCents}, ${input.taxRateBasisPoints}
           ) RETURNING id
         `);
         const [created] = await transaction.select().from(lineItems)
           .where(eq(lineItems.id, inserted.rows[0].id))
           .limit(1);
-        await transaction.update(documents).set({ updatedAt: clock.now() }).where(eq(documents.id, parent.id));
+        await transaction.update(documents).set({ updatedAt: clock.now() }).where(eq(documents.id, locked.documentId));
         return { kind: 'created' as const, line: created };
       });
 
-      if (result.kind === 'missing') {
-        sendNotFound(response);
+      if (sendLineMutationState(response, result)) return;
+      if (result.kind === 'invalid') {
+        sendValidation(response, result.fields);
         return;
       }
-      if (result.kind === 'finalized') {
-        response.status(409).json({ error: { code: 'invalid_state', message: 'Finalized documents cannot be edited.' } });
+      response.status(201).json(serializeLineItem(result.line));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.patch('/:id/line-items/:lineItemId', json({ limit: '64kb' }), async (request, response, next) => {
+    const parsed = parseLineFields(request.body);
+    if (!parsed.values || Object.keys(parsed.fields).length > 0) {
+      sendValidation(response, parsed.fields);
+      return;
+    }
+    if (!UUID_PATTERN.test(request.params.id) || !UUID_PATTERN.test(request.params.lineItemId)) {
+      sendNotFound(response);
+      return;
+    }
+
+    const ownerId = requestOwnerId(request);
+    try {
+      const result = await withTenantTransaction(ownerId, async transaction => {
+        const locked = await lockDraftLines(transaction, request.params.id);
+        if (locked.kind !== 'draft') return locked;
+        const current = locked.lines.find(line => line.id === request.params.lineItemId);
+        if (!current) return { kind: 'line_missing' as const };
+
+        const input = {
+          description: parsed.values!.description ?? current.description,
+          quantity: parsed.values!.quantity ?? current.quantity,
+          unitPriceCents: parsed.values!.unitPriceCents ?? current.unitPriceCents,
+          discountCents: parsed.values!.discountCents ?? current.discountCents,
+          taxRateBasisPoints: parsed.values!.taxRateBasisPoints ?? current.taxRateBasisPoints,
+        };
+        const inputErrors = lineValidation(input);
+        const newPosition = parsed.values!.position ?? current.position;
+        if (newPosition > locked.lines.length) {
+          inputErrors.position = 'Position must be between 1 and the current line count.';
+        }
+        if (newPosition !== current.position && locked.lines.length >= MAX_DATABASE_INTEGER) {
+          inputErrors.position = 'This draft cannot contain more line items.';
+        }
+
+        const proposedAmounts = calculateDocumentAmounts(locked.lines.map(line =>
+          line.id === current.id ? input : databaseLineInput(line)));
+        if (!amountsWithinSafeRange(proposedAmounts)) {
+          inputErrors.body = 'Document amounts exceed the supported safe integer range.';
+        }
+        if (Object.keys(inputErrors).length > 0) return { kind: 'invalid' as const, fields: inputErrors };
+
+        if (newPosition !== current.position) {
+          await moveLinePosition(transaction, locked.lines, current.id, newPosition);
+        }
+        await transaction.update(lineItems).set({
+          description: input.description,
+          quantity: input.quantity,
+          unitPriceCents: input.unitPriceCents,
+          discountCents: input.discountCents,
+          taxRateBasisPoints: input.taxRateBasisPoints,
+        }).where(eq(lineItems.id, current.id));
+        await transaction.update(documents).set({ updatedAt: clock.now() }).where(eq(documents.id, locked.documentId));
+        const [updated] = await transaction.select().from(lineItems).where(eq(lineItems.id, current.id)).limit(1);
+        return { kind: 'updated' as const, line: updated };
+      });
+
+      if (sendLineMutationState(response, result)) return;
+      if (result.kind === 'line_missing') {
+        sendNotFound(response);
         return;
       }
       if (result.kind === 'invalid') {
         sendValidation(response, result.fields);
         return;
       }
-      response.status(201).json(serializeLineItem(result.line));
+      response.status(200).json(serializeLineItem(result.line));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.delete('/:id/line-items/:lineItemId', async (request, response, next) => {
+    if (!UUID_PATTERN.test(request.params.id) || !UUID_PATTERN.test(request.params.lineItemId)) {
+      sendNotFound(response);
+      return;
+    }
+
+    const ownerId = requestOwnerId(request);
+    try {
+      const result = await withTenantTransaction(ownerId, async transaction => {
+        const locked = await lockDraftLines(transaction, request.params.id);
+        if (locked.kind !== 'draft') return locked;
+        const current = locked.lines.find(line => line.id === request.params.lineItemId);
+        if (!current) return { kind: 'line_missing' as const };
+
+        await transaction.delete(lineItems).where(eq(lineItems.id, current.id));
+        const shifted = locked.lines.filter(line => line.position > current.position)
+          .sort((left, right) => left.position - right.position);
+        for (const line of shifted) {
+          await transaction.update(lineItems).set({ position: line.position - 1 }).where(eq(lineItems.id, line.id));
+        }
+        await transaction.update(documents).set({ updatedAt: clock.now() }).where(eq(documents.id, locked.documentId));
+        return { kind: 'deleted' as const };
+      });
+
+      if (sendLineMutationState(response, result)) return;
+      if (result.kind === 'line_missing') {
+        sendNotFound(response);
+        return;
+      }
+      response.status(204).end();
     } catch (error) {
       next(error);
     }

@@ -256,3 +256,93 @@ test('restores unsaved editor input after session expiry and sign-in', async ({ 
     await migrationPool.query('DELETE FROM users WHERE email_canonical = $1', [email.toLowerCase()]);
   }
 });
+
+test('edits, moves, and removes saved line items with visible controls', async ({ page }) => {
+  const email = `line-mutations-${randomUUID()}@example.com`;
+  const password = 'A🔐b$cD';
+  try {
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Create account' }).click();
+    await page.getByLabel('Email address').fill(email);
+    await page.getByLabel('Password').fill(password);
+    await page.getByRole('button', { name: 'Create account' }).click();
+    await expect(page.getByRole('heading', { name: 'Documents', exact: true })).toBeVisible();
+
+    await page.getByRole('button', { name: 'New document' }).click();
+    await page.getByLabel('Document name').fill('Line mutation draft');
+    for (const [index, description] of ['Alpha', 'Bravo', 'Charlie'].entries()) {
+      await page.getByRole('button', { name: 'Add line item' }).click();
+      const line = page.getByTestId('line-item').nth(index);
+      await line.getByLabel('Line description').fill(description);
+      await line.getByLabel('Unit price €').fill(`${(index + 1) * 10}.00`);
+    }
+    await page.getByRole('button', { name: 'Save as draft' }).click();
+    await expect(page).toHaveURL(/#\/documents\/[0-9a-f-]+$/i);
+    const documentId = new URL(page.url()).hash.split('/').at(-1)!;
+    await expect(page.getByTestId('line-item')).toHaveCount(3);
+
+    const detailUrl = new URL(`/documents/${documentId}`, page.url()).toString();
+    const initialResponse = await page.context().request.get(detailUrl);
+    expect(initialResponse.status()).toBe(200);
+    const initial = await initialResponse.json() as {
+      lineItems: Array<{ id: string; description: string; position: number; unitPriceCents: number }>;
+    };
+    const ids = Object.fromEntries(initial.lineItems.map(line => [line.description, line.id]));
+
+    const bravo = page.getByTestId('line-item').nth(1);
+    await bravo.getByLabel('Unit price €').fill('1.239');
+    await page.getByRole('button', { name: 'Save changes' }).click();
+    await expect(bravo.getByLabel('Unit price €')).toHaveValue('1.239');
+    await expect(bravo.getByText('Enter a EUR amount with up to two decimals.')).toBeVisible();
+    await page.reload();
+    const recoveredBravo = page.getByTestId('line-item').nth(1);
+    await expect(recoveredBravo.getByLabel('Unit price €')).toHaveValue('1.239');
+    await page.getByRole('button', { name: 'Save changes' }).click();
+    await expect(recoveredBravo.getByText('Enter a EUR amount with up to two decimals.')).toBeVisible();
+    const afterInvalidResponse = await page.context().request.get(detailUrl);
+    const afterInvalid = await afterInvalidResponse.json() as typeof initial;
+    expect(afterInvalid.lineItems.map(line => [line.id, line.unitPriceCents])).toEqual([
+      [ids.Alpha, 1000], [ids.Bravo, 2000], [ids.Charlie, 3000],
+    ]);
+
+    await recoveredBravo.getByLabel('Unit price €').fill('21.99');
+    await page.getByRole('button', { name: 'Move line 2 up' }).click();
+    await expect(page.getByTestId('line-item').nth(0).getByLabel('Line description')).toHaveValue('Bravo');
+    await page.getByRole('button', { name: 'Save changes' }).click();
+    await expect(page.getByRole('status')).toHaveText('Draft saved.');
+    await page.reload();
+    await expect(page.getByTestId('line-item').nth(0).getByLabel('Line description')).toHaveValue('Bravo');
+
+    const movedResponse = await page.context().request.get(detailUrl);
+    expect(movedResponse.status()).toBe(200);
+    const moved = await movedResponse.json() as typeof initial;
+    expect(moved.lineItems.map(line => [line.id, line.position, line.description, line.unitPriceCents])).toEqual([
+      [ids.Bravo, 1, 'Bravo', 2199], [ids.Alpha, 2, 'Alpha', 1000], [ids.Charlie, 3, 'Charlie', 3000],
+    ]);
+    await test.info().attach('issue-16-after-move.json', {
+      body: JSON.stringify(moved, null, 2), contentType: 'application/json',
+    });
+
+    await page.getByRole('button', { name: 'Remove line 2' }).click();
+    await expect(page.getByTestId('line-item')).toHaveCount(2);
+    await page.getByRole('button', { name: 'Save changes' }).click();
+    await expect(page.getByRole('status')).toHaveText('Draft saved.');
+    await page.reload();
+    await expect(page.getByTestId('line-item')).toHaveCount(2);
+    const finalResponse = await page.context().request.get(detailUrl);
+    expect(finalResponse.status()).toBe(200);
+    const persisted = await finalResponse.json() as typeof initial;
+    expect(persisted.lineItems.map(line => [line.id, line.position, line.description])).toEqual([
+      [ids.Bravo, 1, 'Bravo'], [ids.Charlie, 2, 'Charlie'],
+    ]);
+    await test.info().attach('issue-16-persisted-document.json', {
+      body: JSON.stringify(persisted, null, 2), contentType: 'application/json',
+    });
+    await page.screenshot({ fullPage: true }).then(body => test.info().attach('issue-16-editor-desktop.png', { body, contentType: 'image/png' }));
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+    await page.screenshot({ fullPage: true }).then(body => test.info().attach('issue-16-editor-mobile.png', { body, contentType: 'image/png' }));
+  } finally {
+    await migrationPool.query('DELETE FROM users WHERE email_canonical = $1', [email.toLowerCase()]);
+  }
+});
