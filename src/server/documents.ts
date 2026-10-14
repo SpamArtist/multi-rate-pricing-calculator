@@ -4,6 +4,13 @@ import { authenticatedOwnerId } from './auth.js';
 import { documents, lineItems } from '../db/schema.js';
 import { withTenantTransaction, type AuthenticatedOwnerId, type TenantTransaction } from '../db/client.js';
 import { isCalendarDate } from '../shared/document-validation.js';
+import {
+  amountsWithinSafeRange,
+  calculateDocumentAmounts,
+  calculateLineAmounts,
+  MAX_SAFE_AMOUNT,
+  type LinePricingInput,
+} from '../shared/pricing.js';
 import { type Clock } from './clock.js';
 
 type Fields = Record<string, string>;
@@ -26,7 +33,18 @@ function requestOwnerId(request: Request): AuthenticatedOwnerId {
 }
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const MAX_SAFE_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
+const MAX_DATABASE_INTEGER = 2_147_483_647;
+
+type ParsedLineValues = Partial<{
+  description: string;
+  quantity: bigint;
+  unitPriceCents: bigint;
+  discountCents: bigint;
+  taxRateBasisPoints: number;
+  position: number;
+}>;
+
+type CompleteLineInput = LinePricingInput & { description: string };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -84,21 +102,108 @@ function sendNotFound(response: Parameters<RequestHandler>[1]): void {
 }
 
 function toSafeNumber(value: bigint): number {
-  if (value < 0n || value > MAX_SAFE_BIGINT) throw new RangeError('Document amount exceeds the safe integer range.');
+  if (value < 0n || value > MAX_SAFE_AMOUNT) throw new RangeError('Document amount exceeds the safe integer range.');
   return Number(value);
 }
 
-function inputLineAmounts(line: typeof lineItems.$inferSelect): Amounts {
-  const subtotal = line.quantity * line.unitPriceCents;
-  const taxable = subtotal - line.discountCents;
-  const tax = (taxable * BigInt(line.taxRateBasisPoints) + 5_000n) / 10_000n;
-  const total = taxable + tax;
+function parseLineFields(body: unknown, required: readonly string[] = []): { fields: Fields; values?: ParsedLineValues } {
+  const fields = Object.create(null) as Fields;
+  if (!isRecord(body)) {
+    fields.body = 'Send a line item object.';
+    return { fields };
+  }
+
+  const allowed = ['description', 'quantity', 'unitPriceCents', 'discountCents', 'taxRateBasisPoints', 'position'];
+  for (const key of Object.keys(body)) {
+    if (!allowed.includes(key)) fields[key] = 'This field is not allowed.';
+  }
+  if (required.length === 0 && Object.keys(body).length === 0) {
+    fields.body = 'Update at least one line item field.';
+  }
+
+  const values: ParsedLineValues = {};
+  for (const key of allowed) {
+    const isRequired = required.includes(key);
+    if (!Object.hasOwn(body, key)) {
+      if (isRequired) fields[key] = key === 'quantity' ? 'Enter a positive whole quantity.' : 'Enter a nonnegative whole amount in cents.';
+      continue;
+    }
+
+    const value = body[key];
+    if (key === 'description') {
+      if (typeof value !== 'string') fields.description = 'Enter a line description.';
+      else values.description = value.trim();
+    } else if (key === 'quantity') {
+      if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) fields.quantity = 'Enter a positive whole quantity.';
+      else values.quantity = BigInt(value);
+    } else if (key === 'unitPriceCents' || key === 'discountCents') {
+      if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) fields[key] = 'Enter a nonnegative whole amount in cents.';
+      else values[key] = BigInt(value);
+    } else if (key === 'taxRateBasisPoints') {
+      if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0 || value > 10_000) {
+        fields.taxRateBasisPoints = 'Enter a whole tax rate from 0 to 10000 basis points.';
+      } else values.taxRateBasisPoints = value;
+    } else if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1 || value > MAX_DATABASE_INTEGER) {
+      fields.position = 'Enter a valid line position.';
+    } else values.position = value;
+  }
+
+  return Object.keys(fields).length > 0 ? { fields } : { fields, values };
+}
+
+function completeLineInput(values: ParsedLineValues): CompleteLineInput {
   return {
-    subtotalCents: toSafeNumber(subtotal),
+    description: values.description ?? '',
+    quantity: values.quantity!,
+    unitPriceCents: values.unitPriceCents!,
+    discountCents: values.discountCents ?? 0n,
+    taxRateBasisPoints: values.taxRateBasisPoints ?? 0,
+  };
+}
+
+function databaseLineInput(line: typeof lineItems.$inferSelect): CompleteLineInput {
+  return {
+    description: line.description,
+    quantity: line.quantity,
+    unitPriceCents: line.unitPriceCents,
+    discountCents: line.discountCents,
+    taxRateBasisPoints: line.taxRateBasisPoints,
+  };
+}
+
+function lineValidation(input: CompleteLineInput): Fields {
+  const fields = Object.create(null) as Fields;
+  const amounts = calculateLineAmounts(input);
+  if (input.discountCents > amounts.subtotalCents) {
+    fields.discountCents = 'Discount cannot exceed the line subtotal.';
+  }
+  if (!amountsWithinSafeRange(amounts)) {
+    fields.body = 'Line amounts exceed the supported safe integer range.';
+  }
+  return fields;
+}
+
+function serializeLineItem(line: typeof lineItems.$inferSelect) {
+  return {
+    id: line.id,
+    position: line.position,
+    description: line.description,
+    quantity: toSafeNumber(line.quantity),
+    unitPriceCents: toSafeNumber(line.unitPriceCents),
     discountCents: toSafeNumber(line.discountCents),
-    taxableCents: toSafeNumber(taxable),
-    taxCents: toSafeNumber(tax),
-    totalCents: toSafeNumber(total),
+    taxRateBasisPoints: line.taxRateBasisPoints,
+    amounts: lineAmounts(line),
+  };
+}
+
+function inputLineAmounts(line: typeof lineItems.$inferSelect): Amounts {
+  const amounts = calculateLineAmounts(databaseLineInput(line));
+  return {
+    subtotalCents: toSafeNumber(amounts.subtotalCents),
+    discountCents: toSafeNumber(amounts.discountCents),
+    taxableCents: toSafeNumber(amounts.taxableCents),
+    taxCents: toSafeNumber(amounts.taxCents),
+    totalCents: toSafeNumber(amounts.totalCents),
   };
 }
 
@@ -140,16 +245,7 @@ async function serializeDocument(transaction: TenantTransaction, row: typeof doc
   const lines = await transaction.select().from(lineItems)
     .where(eq(lineItems.documentId, row.id))
     .orderBy(asc(lineItems.position), asc(lineItems.id));
-  const lineItemsResponse = lines.map(line => ({
-    id: line.id,
-    position: line.position,
-    description: line.description,
-    quantity: toSafeNumber(line.quantity),
-    unitPriceCents: toSafeNumber(line.unitPriceCents),
-    discountCents: toSafeNumber(line.discountCents),
-    taxRateBasisPoints: line.taxRateBasisPoints,
-    amounts: lineAmounts(line),
-  }));
+  const lineItemsResponse = lines.map(serializeLineItem);
 
   const calculated = lines.reduce((total, line) => {
     const amounts = lineAmounts(line);
@@ -324,6 +420,84 @@ export function createDocumentsRouter(clock: Clock): Router {
         return;
       }
       response.status(200).json(document.document);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post('/:id/line-items', json({ limit: '64kb' }), async (request, response, next) => {
+    const parsed = parseLineFields(request.body, ['quantity', 'unitPriceCents']);
+    if (!parsed.values || Object.keys(parsed.fields).length > 0) {
+      sendValidation(response, parsed.fields);
+      return;
+    }
+    if (!UUID_PATTERN.test(request.params.id)) {
+      sendNotFound(response);
+      return;
+    }
+
+    const input = completeLineInput(parsed.values);
+    const inputErrors = lineValidation(input);
+    if (Object.keys(inputErrors).length > 0) {
+      sendValidation(response, inputErrors);
+      return;
+    }
+
+    const ownerId = requestOwnerId(request);
+    try {
+      const result = await withTenantTransaction(ownerId, async transaction => {
+        const [parent] = await transaction.select({ id: documents.id, status: documents.status })
+          .from(documents)
+          .where(eq(documents.id, request.params.id))
+          .for('update')
+          .limit(1);
+        if (!parent) return { kind: 'missing' as const };
+        if (parent.status !== 'draft') return { kind: 'finalized' as const };
+
+        const existing = await transaction.select().from(lineItems)
+          .where(eq(lineItems.documentId, parent.id))
+          .orderBy(asc(lineItems.position), asc(lineItems.id));
+        const requestedPosition = parsed.values!.position ?? existing.length + 1;
+        if (requestedPosition > existing.length + 1) {
+          return { kind: 'invalid' as const, fields: { position: 'Position must be between 1 and the next line.' } as Fields };
+        }
+
+        const totals = calculateDocumentAmounts([...existing.map(databaseLineInput), input]);
+        if (!amountsWithinSafeRange(totals)) {
+          return { kind: 'invalid' as const, fields: { body: 'Document amounts exceed the supported safe integer range.' } as Fields };
+        }
+
+        for (const line of existing.filter(item => item.position >= requestedPosition).sort((a, b) => b.position - a.position)) {
+          await transaction.update(lineItems).set({ position: line.position + 1 }).where(eq(lineItems.id, line.id));
+        }
+        const inserted = await transaction.execute<{ id: string }>(sql`
+          INSERT INTO line_items (
+            document_id, position, description, quantity, unit_price_cents, discount_cents, tax_rate_basis_points
+          ) VALUES (
+            ${parent.id}, ${requestedPosition}, ${input.description}, ${input.quantity}, ${input.unitPriceCents},
+            ${input.discountCents}, ${input.taxRateBasisPoints}
+          ) RETURNING id
+        `);
+        const [created] = await transaction.select().from(lineItems)
+          .where(eq(lineItems.id, inserted.rows[0].id))
+          .limit(1);
+        await transaction.update(documents).set({ updatedAt: clock.now() }).where(eq(documents.id, parent.id));
+        return { kind: 'created' as const, line: created };
+      });
+
+      if (result.kind === 'missing') {
+        sendNotFound(response);
+        return;
+      }
+      if (result.kind === 'finalized') {
+        response.status(409).json({ error: { code: 'invalid_state', message: 'Finalized documents cannot be edited.' } });
+        return;
+      }
+      if (result.kind === 'invalid') {
+        sendValidation(response, result.fields);
+        return;
+      }
+      response.status(201).json(serializeLineItem(result.line));
     } catch (error) {
       next(error);
     }
