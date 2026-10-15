@@ -1,7 +1,46 @@
-import type { DocumentData } from '../api/contracts.js';
+import type { DocumentData, DraftSaveBody } from '../api/contracts.js';
 import { lineValuesFromDocument, type DocumentValues, type LineValues, type PersistedEditorErrors } from './model.js';
 
 const EDITOR_STORAGE_PREFIX = 'pricing-calculator:editor:';
+
+export type PendingDraftSave = {
+  body: DraftSaveBody;
+  lineKeys: string[];
+  signature: string;
+};
+
+function pendingSaveKey(ownerId: string, documentId?: string): string {
+  return `${EDITOR_STORAGE_PREFIX}${ownerId}:${documentId ?? 'new'}:pending-save`;
+}
+
+export function readPendingDraftSave(ownerId: string, documentId?: string): PendingDraftSave | null {
+  try {
+    const raw = window.sessionStorage.getItem(pendingSaveKey(ownerId, documentId));
+    if (!raw) return null;
+    const value = JSON.parse(raw) as Partial<PendingDraftSave>;
+    if (!value.body || typeof value.body.mutationId !== 'string' || !Array.isArray(value.body.lineItems)
+      || !Array.isArray(value.lineKeys) || typeof value.signature !== 'string') return null;
+    return value as PendingDraftSave;
+  } catch {
+    return null;
+  }
+}
+
+export function storePendingDraftSave(ownerId: string, documentId: string | undefined, pending: PendingDraftSave): void {
+  try {
+    window.sessionStorage.setItem(pendingSaveKey(ownerId, documentId), JSON.stringify(pending));
+  } catch {
+    // Live form state remains available when browser storage is unavailable.
+  }
+}
+
+export function clearPendingDraftSave(ownerId: string, documentId?: string): void {
+  try {
+    window.sessionStorage.removeItem(pendingSaveKey(ownerId, documentId));
+  } catch {
+    // Nothing to clear when browser storage is unavailable.
+  }
+}
 
 function lineStorageKey(ownerId: string, documentId?: string): string {
   return `${EDITOR_STORAGE_PREFIX}${ownerId}:${documentId ?? 'new'}:lines`;
@@ -100,6 +139,7 @@ export function clearEditorValues(ownerId: string, documentId?: string): void {
   try {
     window.sessionStorage.removeItem(editorStorageKey(ownerId, documentId));
     window.sessionStorage.removeItem(lineStorageKey(ownerId, documentId));
+    clearPendingDraftSave(ownerId, documentId);
     clearEditorErrors(ownerId, documentId);
   } catch {
     // The server copy remains authoritative after a successful save.
@@ -127,24 +167,14 @@ export function restoreEditor(ownerId: string, documentId: string, document: Doc
   };
   const savedLines = lineValuesFromDocument(document);
   const recoveredLines = readEditorLines(ownerId, documentId);
-  const savedIds = new Set(savedLines.map(line => line.id));
-  const recoveredLineIds = new Set(recoveredLines?.flatMap(line => line.id ? [line.id] : []) ?? []);
-  const recoveredSavedLines = recoveredLines?.filter(line => line.id && savedIds.has(line.id)) ?? [];
   const savedById = new Map(savedLines.flatMap(line => line.id ? [[line.id, line] as const] : []));
-  const restoredSavedLines = recoveredSavedLines.flatMap(line => {
-    const saved = savedById.get(line.id!);
-    return saved ? [{ ...saved, ...line, amounts: saved.amounts }] : [];
-  });
-  const restoredSavedIds = new Set(restoredSavedLines.map(line => line.id));
-  const remainingSavedLines = savedLines.filter(line => !restoredSavedIds.has(line.id)
-    && (!recoveredLines || Boolean(line.id && recoveredLineIds.has(line.id))));
-  const unsavedLines = recoveredLines?.filter(line => !line.id || !savedIds.has(line.id)) ?? [];
+  const restoredLines = recoveredLines?.map(line => {
+    const saved = line.id ? savedById.get(line.id) : undefined;
+    return saved ? { ...saved, ...line, amounts: saved.amounts } : line;
+  }) ?? savedLines;
   return {
     values,
-    lines: [...restoredSavedLines, ...remainingSavedLines, ...unsavedLines],
+    lines: restoredLines,
     errors: readEditorErrors(ownerId, documentId),
-    removedLineIds: recoveredLines
-      ? savedLines.flatMap(line => line.id && !recoveredLineIds.has(line.id) ? [line.id] : [])
-      : [],
   };
 }

@@ -36,3 +36,19 @@ export type DocumentData = DocumentSummary & {
   }>;
 };
 export type FieldErrors = Record<string, string>;
+
+export type DraftSaveBody = {
+  mutationId: string;
+  documentId?: string;
+  title: string;
+  customerName: string;
+  issueDate: string;
+  lineItems: Array<{
+    id?: string;
+    description: string;
+    quantity: number;
+    unitPriceCents: number;
+    discountCents: number;
+    taxRateBasisPoints: number;
+  }>;
+};

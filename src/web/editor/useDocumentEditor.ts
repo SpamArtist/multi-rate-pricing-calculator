@@ -19,7 +19,6 @@ export function useDocumentEditor({ owner, documentId, onAuthExpired }: Document
     ? null
     : readEditorValues(owner.id) ?? { title: '', customerName: '', issueDate: localToday() });
   const [lines, setLines] = React.useState<LineValues[]>(() => documentId ? [] : readEditorLines(owner.id) ?? []);
-  const [removedLineIds, setRemovedLineIds] = React.useState<string[]>([]);
   const [loading, setLoading] = React.useState(Boolean(documentId));
   const [loadError, setLoadError] = React.useState('');
   const [serverErrors, setServerErrors] = React.useState<FieldErrors>({});
@@ -48,7 +47,6 @@ export function useDocumentEditor({ owner, documentId, onAuthExpired }: Document
         const restored = restoreEditor(owner.id, documentId, result);
         setValues(restored.values);
         setLines(restored.lines);
-        setRemovedLineIds(restored.removedLineIds);
         if (restored.errors) {
           setServerErrors(restored.errors.document);
           setServerLineErrors(restored.errors.lines);
@@ -114,7 +112,6 @@ export function useDocumentEditor({ owner, documentId, onAuthExpired }: Document
   function removeLine(key: string): void {
     const removed = lines.find(line => line.key === key);
     if (!removed) return;
-    if (removed.id) setRemovedLineIds(current => current.includes(removed.id!) ? current : [...current, removed.id!]);
     const next = lines.filter(line => line.key !== key);
     setLines(next);
     storeEditorLines(owner.id, documentId, next);
@@ -147,9 +144,6 @@ export function useDocumentEditor({ owner, documentId, onAuthExpired }: Document
       case 'document':
         setServerErrors(errors.fields);
         break;
-      case 'line':
-        setServerLineErrors(current => ({ ...current, [errors.key]: errors.fields }));
-        break;
       case 'finalization':
         setServerErrors(errors.document);
         setServerLineErrors(errors.lines);
@@ -172,8 +166,8 @@ export function useDocumentEditor({ owner, documentId, onAuthExpired }: Document
     setPending(true);
     try {
       const outcome = await saveEditorDraft({
-        ownerId: owner.id, documentId, values, lines, removedLineIds,
-        linePreviews, hasLineErrors, previewAmounts, finalizeAfterSave,
+        ownerId: owner.id, documentId, document, values, lines,
+        hasLineErrors, previewAmounts, finalizeAfterSave,
       });
       switch (outcome.kind) {
         case 'auth-expired':
@@ -187,7 +181,6 @@ export function useDocumentEditor({ owner, documentId, onAuthExpired }: Document
           setDocument(outcome.document);
           setValues({ title: outcome.document.title, customerName: outcome.document.customerName, issueDate: outcome.document.issueDate });
           setLines(lineValuesFromDocument(outcome.document));
-          setRemovedLineIds([]);
           setServerLineErrors({});
           setSubmitted(false);
           setServerErrors({});
@@ -196,7 +189,6 @@ export function useDocumentEditor({ owner, documentId, onAuthExpired }: Document
           setDocument(outcome.document);
           setValues({ title: outcome.document.title, customerName: outcome.document.customerName, issueDate: outcome.document.issueDate });
           setLines(outcome.lines);
-          setRemovedLineIds([]);
           setServerLineErrors({});
           setSubmitted(true);
           break;
@@ -210,7 +202,6 @@ export function useDocumentEditor({ owner, documentId, onAuthExpired }: Document
             setDocument(document);
             setValues({ title: document.title, customerName: document.customerName, issueDate: document.issueDate });
             setLines(lines);
-            setRemovedLineIds([]);
           }
           setSubmitted(true);
           break;

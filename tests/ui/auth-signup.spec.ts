@@ -3,8 +3,6 @@ import { expect, test } from '@playwright/test';
 import argon2 from 'argon2';
 import { migrationPool } from '../support/db-fixture.js';
 
-test.afterAll(async () => { await migrationPool.end(); });
-
 test('registration form shows inline validation, then opens private workspace', async ({ page }) => {
   const email = `owner-${randomUUID()}@example.com`;
   try {

@@ -4,8 +4,6 @@ import { migrationPool } from '../support/db-fixture.js';
 
 test.describe.configure({ mode: 'serial' });
 
-test.afterAll(async () => { await migrationPool.end(); });
-
 test('starts locally, saves a draft, reopens from Documents, and verifies persisted API values', async ({ page }) => {
   const email = `draft-${randomUUID()}@example.com`;
   const password = 'A🔐b$cD';
@@ -309,6 +307,14 @@ test('saves incomplete new document, repairs it, finalizes snapshot, and reloads
     expect(draftResponse.status()).toBe(200);
     const draft = await draftResponse.json() as { status: string; lineItems: unknown[] };
     expect(draft).toMatchObject({ status: 'draft', lineItems: [{}, {}] });
+
+    await page.reload();
+    await expect(page.getByText('Enter a customer name.')).toBeVisible();
+    await page.getByRole('button', { name: 'Finalize document' }).click();
+    await expect(page.getByText('Enter a line description.')).toBeVisible();
+    await page.reload();
+    await expect(page.getByText('Enter a customer name.')).toBeVisible();
+    await expect(page.getByText('Enter a line description.')).toBeVisible();
 
     await page.getByLabel('Customer name').fill('Alpen Studio');
     await firstLine.getByLabel('Line description').fill('Brand workshop');

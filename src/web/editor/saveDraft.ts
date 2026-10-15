@@ -1,19 +1,27 @@
-import type { Amounts, DocumentData, FieldErrors } from '../api/contracts.js';
+import type { Amounts, DocumentData, DraftSaveBody, FieldErrors } from '../api/contracts.js';
 import { responseError } from '../api/client.js';
 import {
   type DocumentValues,
   type LineValues,
-  type LinePreview,
-  lineFieldErrors,
   lineValuesFromDocument,
+  newLineValues,
+  previewLine,
   splitFinalizationErrors,
 } from './model.js';
-import { clearEditorValues, storeEditorValues, storeEditorLines, storeEditorErrors } from './storage.js';
+import {
+  clearEditorValues,
+  clearPendingDraftSave,
+  readPendingDraftSave,
+  storeEditorErrors,
+  storeEditorLines,
+  storeEditorValues,
+  storePendingDraftSave,
+  type PendingDraftSave,
+} from './storage.js';
 
 export type FinalizationErrors = ReturnType<typeof splitFinalizationErrors>;
 export type SaveErrors =
   | { kind: 'document'; fields: FieldErrors }
-  | { kind: 'line'; key: string; fields: ReturnType<typeof lineFieldErrors> }
   | ({ kind: 'finalization' } & FinalizationErrors);
 
 export type SaveDraftOutcome =
@@ -32,137 +40,131 @@ export type SaveDraftOutcome =
 export type SaveDraftInput = {
   ownerId: string;
   documentId?: string;
+  document: DocumentData | null;
   values: DocumentValues;
   lines: LineValues[];
-  removedLineIds: string[];
-  linePreviews: LinePreview[];
   hasLineErrors: boolean;
   previewAmounts?: Amounts;
   finalizeAfterSave: boolean;
 };
 
-/** Persist a draft and its recovery data; callers own React state and navigation. */
+function signature(values: DocumentValues, lines: LineValues[]): string {
+  return JSON.stringify({
+    values,
+    lines: lines.map(({ key, id, description, quantity, unitPrice, discount, taxRate }) =>
+      ({ key, id, description, quantity, unitPrice, discount, taxRate })),
+  });
+}
+
+function draftBody(
+  documentId: string | undefined,
+  values: DocumentValues,
+  lines: LineValues[],
+  authoritative: DocumentData | null,
+): { body: DraftSaveBody; lineKeys: string[] } {
+  const savedById = new Map(authoritative?.lineItems.map(line => [line.id, line] as const) ?? []);
+  const lineItems: DraftSaveBody['lineItems'] = [];
+  const lineKeys: string[] = [];
+  for (const line of lines) {
+    const valid = previewLine(line).input;
+    const saved = line.id ? savedById.get(line.id) : undefined;
+    if (!valid && !saved) continue;
+    lineKeys.push(line.key);
+    lineItems.push(valid ? {
+      ...(line.id ? { id: line.id } : {}),
+      description: line.description,
+      quantity: Number(valid.quantity),
+      unitPriceCents: Number(valid.unitPriceCents),
+      discountCents: Number(valid.discountCents),
+      taxRateBasisPoints: valid.taxRateBasisPoints,
+    } : {
+      id: saved!.id,
+      description: saved!.description,
+      quantity: saved!.quantity,
+      unitPriceCents: saved!.unitPriceCents,
+      discountCents: saved!.discountCents,
+      taxRateBasisPoints: saved!.taxRateBasisPoints,
+    });
+  }
+  return {
+    body: { mutationId: globalThis.crypto.randomUUID(), ...(documentId ? { documentId } : {}), ...values, lineItems },
+    lineKeys,
+  };
+}
+
+function attachServerIds(lines: LineValues[], pending: PendingDraftSave, document: DocumentData): LineValues[] {
+  const idsByKey = new Map(pending.lineKeys.map((key, index) => [key, document.lineItems[index]?.id] as const));
+  return lines.map(line => {
+    const id = idsByKey.get(line.key);
+    return id ? { ...line, id } : line;
+  });
+}
+
+/** One committed aggregate save; pending request survives network loss and browser reload. */
 export async function saveEditorDraft(input: SaveDraftInput): Promise<SaveDraftOutcome> {
-  const { ownerId, documentId, values, lines, removedLineIds, linePreviews, hasLineErrors, previewAmounts, finalizeAfterSave } = input;
-  let createdDocumentId: string | undefined;
-  let linesBeingSaved = [...lines];
-  let errors: SaveErrors | null = null;
+  const { ownerId, documentId, values, hasLineErrors, previewAmounts, finalizeAfterSave } = input;
   const destination = (id: string): string | null => documentId ? null : `/documents/${encodeURIComponent(id)}`;
+  const currentSignature = signature(values, input.lines);
+  let localLines = input.lines;
+  let authoritative = input.document;
+  let pending = readPendingDraftSave(ownerId, documentId);
+  let errors: SaveErrors | null = null;
+  let createdDocumentId: string | undefined;
 
   try {
-    const response = await fetch(documentId ? `/documents/${encodeURIComponent(documentId)}` : '/documents', {
-      method: documentId ? 'PATCH' : 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(values),
-    });
-    if (response.status === 401) return { kind: 'auth-expired', errors };
-    const result = await response.json() as DocumentData | { error?: { message?: string; fields?: FieldErrors } };
-    if (!response.ok) {
-      const error = (result as { error?: { message?: string; fields?: FieldErrors } }).error;
-      return {
-        kind: 'failed', errors: { kind: 'document', fields: error?.fields ?? {} },
-        message: error?.message ?? 'Could not save this draft.', navigateTo: null,
-      };
-    }
-    const saved = result as DocumentData;
-    createdDocumentId = saved.id;
-    const documentUrl = `/documents/${encodeURIComponent(saved.id)}`;
-    if (!documentId) {
-      clearEditorValues(ownerId);
-      storeEditorValues(ownerId, saved.id, values);
-      storeEditorLines(ownerId, saved.id, linesBeingSaved);
-    }
-    for (const [index, line] of linesBeingSaved.entries()) {
-      if (line.id) continue;
-      const preview = linePreviews[index];
-      if (!preview.input) continue;
-      const lineResponse = await fetch(`${documentUrl}/line-items`, {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      if (!pending) {
+        const desired = draftBody(authoritative?.id ?? documentId, values, localLines, authoritative);
+        pending = { ...desired, signature: currentSignature };
+        storePendingDraftSave(ownerId, documentId, pending);
+      }
+      const response = await fetch('/documents/draft-save', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          description: line.description,
-          quantity: Number(preview.input.quantity),
-          unitPriceCents: Number(preview.input.unitPriceCents),
-          discountCents: Number(preview.input.discountCents),
-          taxRateBasisPoints: preview.input.taxRateBasisPoints,
-        }),
+        body: JSON.stringify(pending.body),
       });
-      if (lineResponse.status === 401) return { kind: 'auth-expired', errors };
-      if (!lineResponse.ok) {
-        const error = await responseError(lineResponse);
-        storeEditorLines(ownerId, saved.id, linesBeingSaved);
-        return {
-          kind: 'failed', errors: { kind: 'document', fields: error.fields ?? {} },
-          message: error.message ?? 'Could not save a line item. Your input is still here.', navigateTo: destination(saved.id),
-        };
+      if (response.status === 401) return { kind: 'auth-expired', errors };
+      if (!response.ok) {
+        const error = await responseError(response);
+        const submittedLines = pending.lineKeys.map(key => localLines.find(line => line.key === key) ?? { ...newLineValues(), key });
+        clearPendingDraftSave(ownerId, documentId);
+        errors = response.status === 422
+          ? { kind: 'finalization', ...splitFinalizationErrors(error.fields ?? {}, submittedLines) }
+          : null;
+        return { kind: 'failed', errors, message: error.message ?? 'Could not save this draft.', navigateTo: null };
       }
-      const savedLine = await lineResponse.json() as { id: string };
-      linesBeingSaved = linesBeingSaved.map((value, lineIndex) => lineIndex === index ? { ...value, id: savedLine.id } : value);
-      storeEditorLines(ownerId, saved.id, linesBeingSaved);
+
+      const saved = await response.json() as DocumentData;
+      localLines = attachServerIds(localLines, pending, saved);
+      authoritative = saved;
+      clearPendingDraftSave(ownerId, documentId);
+      if (pending.signature === currentSignature) break;
+      pending = null;
     }
 
-    for (const [index, line] of linesBeingSaved.entries()) {
-      if (!line.id) continue;
-      const preview = linePreviews[index];
-      if (!preview.input) continue;
-      const lineResponse = await fetch(`${documentUrl}/line-items/${encodeURIComponent(line.id)}`, {
-        method: 'PATCH',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          description: line.description,
-          quantity: Number(preview.input.quantity),
-          unitPriceCents: Number(preview.input.unitPriceCents),
-          discountCents: Number(preview.input.discountCents),
-          taxRateBasisPoints: preview.input.taxRateBasisPoints,
-          position: index + 1,
-        }),
-      });
-      if (lineResponse.status === 401) return { kind: 'auth-expired', errors };
-      if (!lineResponse.ok) {
-        const error = await responseError(lineResponse);
-        storeEditorLines(ownerId, saved.id, linesBeingSaved);
-        return {
-          kind: 'failed', errors: { kind: 'line', key: line.key, fields: lineFieldErrors(error.fields) },
-          message: error.message ?? 'Could not save a line item. Your input is still here.', navigateTo: destination(saved.id),
-        };
-      }
-      storeEditorLines(ownerId, saved.id, linesBeingSaved);
+    const saved = authoritative!;
+    if (!documentId) {
+      createdDocumentId = saved.id;
+      storeEditorValues(ownerId, saved.id, values);
+      storeEditorLines(ownerId, saved.id, localLines);
+      clearEditorValues(ownerId);
     }
-
-    for (const removedId of removedLineIds) {
-      const lineResponse = await fetch(`${documentUrl}/line-items/${encodeURIComponent(removedId)}`, { method: 'DELETE' });
-      if (lineResponse.status === 401) return { kind: 'auth-expired', errors };
-      if (!lineResponse.ok && lineResponse.status !== 404) {
-        const error = await responseError(lineResponse);
-        storeEditorLines(ownerId, saved.id, linesBeingSaved);
-        return {
-          kind: 'failed', errors,
-          message: error.message ?? 'Could not remove a line item. Your other input is still here.', navigateTo: destination(saved.id),
-        };
-      }
-    }
-
+    const savedLineKeys = pending?.lineKeys ?? [];
+    const documentUrl = `/documents/${encodeURIComponent(saved.id)}`;
     if (finalizeAfterSave && (hasLineErrors || !previewAmounts)) {
-      const detailResponse = await fetch(documentUrl);
-      if (detailResponse.status === 401) return { kind: 'auth-expired', errors };
-      if (!detailResponse.ok) {
-        return { kind: 'failed', errors, message: 'Draft saved, but could not refresh its server values. Reload to get current values.', navigateTo: null };
-      }
-      const authoritative = await detailResponse.json() as DocumentData;
-      if (!documentId) clearEditorValues(ownerId);
+      clearEditorValues(ownerId, documentId);
       storeEditorValues(ownerId, saved.id, {
-        title: authoritative.title, customerName: authoritative.customerName, issueDate: authoritative.issueDate,
+        title: saved.title, customerName: saved.customerName, issueDate: saved.issueDate,
       });
-      storeEditorLines(ownerId, saved.id, linesBeingSaved);
+      storeEditorLines(ownerId, saved.id, localLines);
       storeEditorErrors(ownerId, saved.id, { document: {}, lines: {}, submitted: true });
       return {
-        kind: 'incomplete-draft', document: authoritative, lines: linesBeingSaved,
+        kind: 'incomplete-draft', document: saved, lines: localLines,
         message: hasLineErrors ? 'Fix line item fields before finalizing. Draft saved.' : 'Draft saved. Correct amounts before finalizing.',
-        navigateTo: destination(authoritative.id),
+        navigateTo: destination(saved.id),
       };
     }
 
-    let finalizedDocument: DocumentData | undefined;
     if (finalizeAfterSave) {
       const finalizeResponse = await fetch(`${documentUrl}/finalize`, {
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({}),
@@ -172,7 +174,8 @@ export async function saveEditorDraft(input: SaveDraftInput): Promise<SaveDraftO
         const error = await responseError(finalizeResponse);
         let finalizationErrors: FinalizationErrors | null = null;
         if (finalizeResponse.status === 422 && error.fields) {
-          finalizationErrors = splitFinalizationErrors(error.fields, linesBeingSaved);
+          const savedLines = savedLineKeys.map(key => localLines.find(line => line.key === key) ?? { ...newLineValues(), key });
+          finalizationErrors = splitFinalizationErrors(error.fields, savedLines);
           errors = { kind: 'finalization', ...finalizationErrors };
           storeEditorErrors(ownerId, saved.id, { ...finalizationErrors, submitted: true });
         }
@@ -181,9 +184,9 @@ export async function saveEditorDraft(input: SaveDraftInput): Promise<SaveDraftO
         let refreshed: { document: DocumentData; lines: LineValues[] } | null = null;
         if (detailResponse.ok) {
           const current = await detailResponse.json() as DocumentData;
-          if (!documentId) clearEditorValues(ownerId);
-          const currentLines = current.status === 'draft' ? linesBeingSaved : lineValuesFromDocument(current);
+          const currentLines = current.status === 'draft' ? localLines : lineValuesFromDocument(current);
           refreshed = { document: current, lines: currentLines };
+          if (!documentId) clearEditorValues(ownerId);
           storeEditorValues(ownerId, saved.id, { title: current.title, customerName: current.customerName, issueDate: current.issueDate });
           storeEditorLines(ownerId, saved.id, currentLines);
         }
@@ -192,33 +195,20 @@ export async function saveEditorDraft(input: SaveDraftInput): Promise<SaveDraftO
           message: error.message ?? 'Could not finalize this document. Your draft stays editable.', navigateTo: destination(saved.id),
         };
       }
-      finalizedDocument = await finalizeResponse.json() as DocumentData;
+      authoritative = await finalizeResponse.json() as DocumentData;
     }
 
-    let authoritative = finalizedDocument;
-    if (!authoritative) {
-      const detailResponse = await fetch(documentUrl);
-      if (detailResponse.status === 401) return { kind: 'auth-expired', errors };
-      if (!detailResponse.ok) {
-        return { kind: 'failed', errors, message: 'Draft saved, but could not refresh its server totals. Reload to get current values.', navigateTo: null };
-      }
-      authoritative = await detailResponse.json() as DocumentData;
-    }
     clearEditorValues(ownerId, documentId);
     clearEditorValues(ownerId, saved.id);
     return {
-      kind: 'saved', document: authoritative,
+      kind: 'saved', document: authoritative!,
       message: finalizeAfterSave ? 'Document finalized. This snapshot cannot be changed.' : 'Draft saved.',
-      navigateTo: destination(authoritative.id),
+      navigateTo: destination(saved.id),
     };
   } catch {
-    if (!documentId && createdDocumentId) {
-      storeEditorValues(ownerId, createdDocumentId, values);
-      storeEditorLines(ownerId, createdDocumentId, linesBeingSaved);
-    }
     return {
       kind: 'failed', errors, message: 'Connection failed. Your input is still here. Try again.',
-      navigateTo: !documentId && createdDocumentId ? destination(createdDocumentId) : null,
+      navigateTo: createdDocumentId ? destination(createdDocumentId) : null,
     };
   }
 }
