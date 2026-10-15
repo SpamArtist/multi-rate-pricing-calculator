@@ -3,7 +3,7 @@ import type { useAuth } from './useAuth.js';
 
 export function AuthScreen({ form }: { form: ReturnType<typeof useAuth>['form'] }): React.JSX.Element {
   const {
-    mode, authValues, authMessage, authPending, fieldErrors,
+    mode, authValues, authMessage, pendingOperation, fieldErrors,
     showEmailError, showPasswordError, authenticate, changeAuthField, touchAuthField, changeMode,
   } = form;
 
@@ -54,8 +54,11 @@ export function AuthScreen({ form }: { form: ReturnType<typeof useAuth>['form'] 
           </div>
 
           {authMessage && <p className="request-error" role="alert">{authMessage}</p>}
-          <button className="primary-button" type="submit" disabled={authPending}>
-            {authPending ? (mode === 'sign-in' ? 'Signing in…' : 'Creating account…') : (mode === 'sign-in' ? 'Sign in' : 'Create account')}
+          <button className="primary-button" type="submit" disabled={pendingOperation !== null}>
+            {pendingOperation === 'sign-out' ? 'Signing out…'
+              : pendingOperation === 'sign-in' ? 'Signing in…'
+              : pendingOperation === 'sign-up' ? 'Creating account…'
+              : mode === 'sign-in' ? 'Sign in' : 'Create account'}
           </button>
         </form>
 

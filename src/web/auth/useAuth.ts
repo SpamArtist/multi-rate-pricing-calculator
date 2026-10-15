@@ -7,6 +7,7 @@ import { navigate } from '../routing.js';
 
 type RegistrationValues = { email: string; password: string };
 type AuthMode = 'sign-in' | 'sign-up';
+type AuthOperation = AuthMode | 'sign-out';
 
 export function useAuth() {
   const [user, setUser] = React.useState<User | null>(null);
@@ -17,9 +18,22 @@ export function useAuth() {
   const [authSubmitted, setAuthSubmitted] = React.useState(false);
   const [serverAuthErrors, setServerAuthErrors] = React.useState<Partial<Record<keyof RegistrationValues, string>>>({});
   const [authMessage, setAuthMessage] = React.useState('');
-  const [authPending, setAuthPending] = React.useState(false);
   const [sessionError, setSessionError] = React.useState('');
-  const [signOutPending, setSignOutPending] = React.useState(false);
+  const [pendingOperation, setPendingOperation] = React.useState<AuthOperation | null>(null);
+  const operationInFlight = React.useRef(false);
+
+  function beginOperation(operation: AuthOperation): boolean {
+    // All auth mutations share a cookie. Serialize requests even before React rerenders.
+    if (operationInFlight.current) return false;
+    operationInFlight.current = true;
+    setPendingOperation(operation);
+    return true;
+  }
+
+  function finishOperation(): void {
+    operationInFlight.current = false;
+    setPendingOperation(null);
+  }
 
   React.useEffect(() => {
     let active = true;
@@ -51,7 +65,7 @@ export function useAuth() {
     const { fields: localErrors } = validateRegistrationFields(authValues.email, authValues.password);
     if (localErrors.email || localErrors.password) return;
 
-    setAuthPending(true);
+    if (!beginOperation(mode)) return;
     setAuthMessage('');
     setServerAuthErrors({});
     try {
@@ -80,12 +94,12 @@ export function useAuth() {
     } catch {
       setAuthMessage('Connection failed. Check your network and try again.');
     } finally {
-      setAuthPending(false);
+      finishOperation();
     }
   }
 
   async function signOut(): Promise<void> {
-    setSignOutPending(true);
+    if (!beginOperation('sign-out')) return;
     setSessionError('');
     try {
       const response = await fetch('/auth/logout', { method: 'POST' });
@@ -106,7 +120,7 @@ export function useAuth() {
     } catch {
       setSessionError('Connection failed. Check your network and try again.');
     } finally {
-      setSignOutPending(false);
+      finishOperation();
     }
   }
 
@@ -141,14 +155,14 @@ export function useAuth() {
     user,
     sessionChecked,
     sessionError,
-    signOutPending,
+    signOutPending: pendingOperation === 'sign-out',
     onAuthExpired,
     signOut,
     form: {
       mode,
       authValues,
       authMessage,
-      authPending,
+      pendingOperation,
       fieldErrors,
       showEmailError,
       showPasswordError,
