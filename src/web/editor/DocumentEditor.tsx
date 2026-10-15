@@ -6,9 +6,8 @@ import { LineItem } from './LineItem.js';
 import { useDocumentEditor, type DocumentEditorProps } from './useDocumentEditor.js';
 
 export function DocumentEditor(props: DocumentEditorProps): React.JSX.Element {
-  const { documentId } = props;
   const {
-    document, values, lines, loading, loadError, message, duplicateCopyId, submitted, pending,
+    document, documentId, values, lines, loading, loadError, message, duplicateCopyId, submitted, pending,
     linePreviews, titleError, dateError, customerError, lineItemsError, serverLineErrors,
     canEdit, canMutate, statusLabel, amounts, successMessage,
     changeField, changeLine, moveLine, removeLine, addLine, saveDraft, duplicateDocument, deleteDraft,

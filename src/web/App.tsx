@@ -48,7 +48,7 @@ export function App(): React.JSX.Element {
         <Dashboard key={user.id} user={user} onAuthExpired={onAuthExpired} />
       ) : (
         <DocumentEditor
-          key={`${user.id}:${route.kind === 'document' ? route.id : 'new'}`}
+          key={`${user.id}:${route.key}`}
           owner={user}
           documentId={route.kind === 'document' ? route.id : undefined}
           onAuthExpired={onAuthExpired}

@@ -24,7 +24,7 @@ export type SaveDraftOutcome = {
   kind: 'saved' | 'failed' | 'uncertain' | 'auth-expired';
   errors: SaveErrors | null;
   message: string;
-  navigateTo: string | null;
+  documentId: string | null;
 };
 
 export type SaveCheckpoint = {
@@ -122,7 +122,7 @@ export function createDraftSaver(ownerId: string, documentId?: string) {
     function outcome(kind: SaveDraftOutcome['kind'], message = '', errors: SaveErrors | null = null): SaveDraftOutcome {
       return {
         kind, message, errors,
-        navigateTo: !documentId && recoveryDocumentId ? `/documents/${encodeURIComponent(recoveryDocumentId)}` : null,
+        documentId: recoveryDocumentId ?? null,
       };
     }
 

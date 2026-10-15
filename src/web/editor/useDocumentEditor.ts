@@ -2,7 +2,7 @@ import React from 'react';
 import type { DocumentData, FieldErrors, User } from '../api/contracts.js';
 import { responseError } from '../api/client.js';
 import { localToday } from '../formatting.js';
-import { navigate } from '../routing.js';
+import { navigate, replaceRoute } from '../routing.js';
 import { documentFieldErrors, newLineValues, previewLine, previewDocumentAmounts, type DocumentValues, type EditableLineField, type LineValues } from './model.js';
 import { clearEditorErrors, clearEditorValues, readEditorLines, readEditorValues, restoreEditor, storeEditorLines, storeEditorValues } from './storage.js';
 import { createDraftSaver } from './saveDraft.js';
@@ -13,13 +13,16 @@ export type DocumentEditorProps = {
   onAuthExpired: () => void;
 };
 
-export function useDocumentEditor({ owner, documentId, onAuthExpired }: DocumentEditorProps) {
+export function useDocumentEditor({ owner, documentId: routeDocumentId, onAuthExpired }: DocumentEditorProps) {
+  // The route may gain a server ID; the live editor and saver still own this session.
+  const [initialDocumentId] = React.useState(routeDocumentId);
   const [document, setDocument] = React.useState<DocumentData | null>(null);
-  const [values, setValues] = React.useState<DocumentValues | null>(() => documentId
+  const documentId = document?.id ?? initialDocumentId;
+  const [values, setValues] = React.useState<DocumentValues | null>(() => initialDocumentId
     ? null
     : readEditorValues(owner.id) ?? { title: '', customerName: '', issueDate: localToday() });
-  const [lines, setLines] = React.useState<LineValues[]>(() => documentId ? [] : readEditorLines(owner.id) ?? []);
-  const [loading, setLoading] = React.useState(Boolean(documentId));
+  const [lines, setLines] = React.useState<LineValues[]>(() => initialDocumentId ? [] : readEditorLines(owner.id) ?? []);
+  const [loading, setLoading] = React.useState(Boolean(initialDocumentId));
   const [loadError, setLoadError] = React.useState('');
   const [serverErrors, setServerErrors] = React.useState<FieldErrors>({});
   const [serverLineErrors, setServerLineErrors] = React.useState<Record<string, Partial<Record<EditableLineField, string>>>>({});
@@ -28,12 +31,18 @@ export function useDocumentEditor({ owner, documentId, onAuthExpired }: Document
   const [submitted, setSubmitted] = React.useState(false);
   const [pending, setPending] = React.useState(false);
   const [uncertainFinalization, setUncertainFinalization] = React.useState(false);
-  const [saveEditorDraft] = React.useState(() => createDraftSaver(owner.id, documentId));
+  const [saveEditorDraft] = React.useState(() => createDraftSaver(owner.id, initialDocumentId));
+  const active = React.useRef(false);
 
   React.useEffect(() => {
-    if (!documentId) return;
+    active.current = true;
+    return () => { active.current = false; };
+  }, []);
+
+  React.useEffect(() => {
+    if (!initialDocumentId) return;
     let active = true;
-    void fetch(`/documents/${encodeURIComponent(documentId)}`)
+    void fetch(`/documents/${encodeURIComponent(initialDocumentId)}`)
       .then(async response => {
         if (response.status === 401) {
           onAuthExpired();
@@ -46,7 +55,7 @@ export function useDocumentEditor({ owner, documentId, onAuthExpired }: Document
       .then(result => {
         if (!active || !result) return;
         setDocument(result);
-        const restored = restoreEditor(owner.id, documentId, result);
+        const restored = restoreEditor(owner.id, initialDocumentId, result);
         setValues(restored.values);
         setLines(restored.lines);
         if (restored.errors) {
@@ -60,7 +69,7 @@ export function useDocumentEditor({ owner, documentId, onAuthExpired }: Document
       })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [documentId, onAuthExpired, owner.id]);
+  }, [initialDocumentId, onAuthExpired, owner.id]);
 
   const localErrors = values ? documentFieldErrors(values) : {};
   const linePreviews = lines.map(line => previewLine(line, document?.status === 'finalized'));
@@ -168,12 +177,13 @@ export function useDocumentEditor({ owner, documentId, onAuthExpired }: Document
         setValues(checkpoint.values);
         setLines(checkpoint.lines);
       });
+      if (!active.current) return;
       setServerErrors(outcome.errors?.document ?? {});
       setServerLineErrors(outcome.errors?.lines ?? {});
       setSubmitted(outcome.kind !== 'saved');
       setUncertainFinalization(outcome.kind === 'uncertain');
       setMessage(outcome.message);
-      if (outcome.navigateTo) navigate(outcome.navigateTo);
+      if (outcome.documentId) replaceRoute(`/documents/${encodeURIComponent(outcome.documentId)}`);
       if (outcome.kind === 'auth-expired') onAuthExpired();
     } finally {
       setPending(false);
@@ -246,7 +256,7 @@ export function useDocumentEditor({ owner, documentId, onAuthExpired }: Document
   const successMessage = message === 'Draft saved.' || message === 'Draft duplicated.' || message.startsWith('Document finalized.');
 
   return {
-    document, values, lines, loading, loadError, message, duplicateCopyId, submitted, pending,
+    document, documentId, values, lines, loading, loadError, message, duplicateCopyId, submitted, pending,
     linePreviews, titleError, dateError, customerError, lineItemsError, serverLineErrors,
     canEdit, canMutate, statusLabel, amounts, successMessage,
     changeField, changeLine, moveLine, removeLine, addLine, saveDraft, duplicateDocument, deleteDraft,
