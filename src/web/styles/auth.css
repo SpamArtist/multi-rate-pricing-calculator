@@ -1,0 +1,31 @@
+.auth-shell {
+  --gutter: clamp(1.25rem, 0.75rem + 2vw, 2.75rem);
+  display: grid;
+  grid-template-columns: minmax(var(--gutter), 1fr) minmax(0, 28rem) minmax(var(--gutter), 1fr);
+  align-items: center;
+  min-block-size: 100svh;
+  padding-block: clamp(1.5rem, 1rem + 3vh, 3.5rem);
+  background: var(--page);
+}
+
+.auth-panel {
+  grid-column: 2;
+  display: grid;
+  gap: 1rem;
+  inline-size: 100%;
+  padding: clamp(1.5rem, 1.15rem + 1.6vw, 2.5rem);
+  border: 1px solid var(--line);
+  border-radius: 0.8rem;
+  background: var(--surface);
+}
+
+.auth-form {
+  display: grid;
+  gap: 1.1rem;
+  margin-block-start: 0.4rem;
+}
+
+.field-hint,
+.privacy-note {
+  font-size: 0.82rem;
+}
