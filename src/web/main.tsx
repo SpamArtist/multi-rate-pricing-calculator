@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { isCalendarDate } from '../shared/document-validation.js';
 import { amountsWithinSafeRange, calculateDocumentAmounts, calculateLineAmounts, MAX_SAFE_AMOUNT } from '../shared/pricing.js';
 import { validateRegistrationFields } from '../shared/auth-validation.js';
+import { PrototypeIcon } from './PrototypeIcon.js';
 import './styles.css';
 
 type User = { id: string; email: string };
@@ -619,7 +620,9 @@ function App(): React.JSX.Element {
           <span className="brand-name">Priced</span>
         </a>
         <nav className="primary-nav" aria-label="Main navigation">
-          <a className="nav-link active" href="#/documents" aria-current="page">Documents</a>
+          <a className={`nav-link${route.kind === 'dashboard' ? ' active' : ''}`} href="#/documents" aria-current={route.kind === 'dashboard' ? 'page' : undefined} aria-label="Documents">
+            <PrototypeIcon name="file" /><span className="nav-label">Documents</span>
+          </a>
         </nav>
         <div className="account-actions">
           <span className="account-email">{user.email}</span>
@@ -871,6 +874,7 @@ function Dashboard({ user, onAuthExpired }: { user: User; onAuthExpired: () => v
                   <th scope="col">Issue date</th>
                   <th scope="col">Status</th>
                   <th className="number-cell" scope="col">Total</th>
+                  <th className="row-arrow-cell" scope="col"><span className="visually-hidden">Open</span></th>
                 </tr>
               </thead>
               <tbody>
@@ -884,7 +888,8 @@ function Dashboard({ user, onAuthExpired }: { user: User; onAuthExpired: () => v
                     <td>{item.customerName || '—'}</td>
                     <td>{formatDate(item.issueDate)}</td>
                     <td><span className={`status-badge ${item.status}`}>{item.status === 'draft' ? 'Draft' : 'Finalized'}</span></td>
-                    <td className="number-cell"><span className="row-total"><span>{formatEuro(item.amounts.totalCents)}</span><span className="row-arrow" aria-hidden="true">→</span></span></td>
+                    <td className="number-cell"><span className="row-total">{formatEuro(item.amounts.totalCents)}</span></td>
+                    <td className="row-arrow-cell"><PrototypeIcon name="arrow" /></td>
                   </tr>
                 ))}
               </tbody>
@@ -1075,7 +1080,7 @@ function DocumentEditor({
     return (
       <main className="ledger-page" aria-live="polite">
         {loadError ? <p className="request-error" role="alert">{loadError}</p> : <p>Loading document…</p>}
-        <button className="back-link" type="button" onClick={() => navigate('/documents')}>← All documents</button>
+        <button className="back-link" type="button" onClick={() => navigate('/documents')}><PrototypeIcon name="back" />All documents</button>
       </main>
     );
   }
@@ -1464,15 +1469,16 @@ function DocumentEditor({
   const amounts = document?.status === 'finalized'
     ? document.amounts
     : previewAmounts;
+  const successMessage = message === 'Draft saved.' || message === 'Draft duplicated.' || message.startsWith('Document finalized.');
 
   return (
     <>
-    {duplicateCopyId && message === 'Draft duplicated.' && <p className="document-notice" role="status">
-      Draft duplicated.{' '}
-      <a href={`#/documents/${encodeURIComponent(duplicateCopyId)}`}>Open copy →</a>
+    {message && successMessage && <p className="document-notice" role="status">
+      {message}
+      {duplicateCopyId && message === 'Draft duplicated.' && <> <a href={`#/documents/${encodeURIComponent(duplicateCopyId)}`}>Open copy →</a></>}
     </p>}
     <main className="ledger-page" data-testid="document-editor">
-      <button className="back-link" type="button" onClick={() => navigate('/documents')}>← All documents</button>
+      <button className="back-link" type="button" onClick={() => navigate('/documents')}><PrototypeIcon name="back" />All documents</button>
       <form className="document-form" noValidate onSubmit={event => { event.preventDefault(); void saveDraft(); }}>
         <header className="editor-heading">
           <div className="editor-title">
@@ -1492,22 +1498,19 @@ function DocumentEditor({
               type="button"
               disabled={pending}
               onClick={() => void duplicateDocument()}
-            >{pending ? 'Working…' : 'Duplicate'}</button>}
+            ><PrototypeIcon name="copy" />{pending ? 'Working…' : 'Duplicate'}</button>}
             {document?.status === 'draft' && <button
               className="secondary-button danger-button"
               type="button"
               disabled={pending}
               onClick={() => void deleteDraft()}
             >{pending ? 'Deleting…' : 'Delete draft'}</button>}
-            <button className="secondary-button print-button" type="button" onClick={() => window.print()}>Print</button>
+            <button className="secondary-button print-button" type="button" onClick={() => window.print()}><PrototypeIcon name="print" />Print</button>
           </div>
         </header>
 
         {loadError && <p className="request-error" role="alert">{loadError}</p>}
-        {message && !(duplicateCopyId && message === 'Draft duplicated.') && <p
-          className={message === 'Draft saved.' || message === 'Draft duplicated.' || message.startsWith('Document finalized.') ? 'success-message' : 'request-error'}
-          role={message === 'Draft saved.' || message === 'Draft duplicated.' || message.startsWith('Document finalized.') ? 'status' : 'alert'}
-        >{message}</p>}
+        {message && !successMessage && <p className="request-error" role="alert">{message}</p>}
 
         <section className="metadata editor-section" aria-labelledby="metadata-heading">
           <div className="section-heading">
@@ -1646,7 +1649,7 @@ function DocumentEditor({
                       aria-label={`Remove line ${index + 1}`}
                       disabled={pending}
                       onClick={() => removeLine(line.key)}
-                    >×</button>
+                    ><PrototypeIcon name="trash" /></button>
                 </div>}
                 <p className="line-math">
                   {preview.amounts
@@ -1656,7 +1659,7 @@ function DocumentEditor({
               </article>
             );
           })}
-          {canEdit && <button className="add-line" type="button" onClick={addLine}>＋ Add line item</button>}
+          {canEdit && <button className="add-line" type="button" onClick={addLine}><PrototypeIcon name="plus" />Add line item</button>}
         </section>
 
         <section className="breakdown editor-section" aria-labelledby="arithmetic-heading">
@@ -1682,7 +1685,7 @@ function DocumentEditor({
               disabled={pending}
               onClick={() => void saveDraft(true)}
               aria-describedby="finalize-note"
-            >{pending ? 'Finalizing…' : 'Finalize document'}</button>
+            >{pending ? 'Finalizing…' : 'Finalize document'}<PrototypeIcon name="arrow" /></button>
             <p className="finalize-note" id="finalize-note">Finalization fixes this document permanently.</p>
           </div>}
           {!canEdit && <p className="snapshot-note">Finalized documents are fixed snapshots.</p>}

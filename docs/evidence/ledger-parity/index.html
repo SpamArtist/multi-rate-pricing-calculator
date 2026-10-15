@@ -1,0 +1,55 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Ledger prototype parity review</title><style>body{margin:0;font:16px/1.5 system-ui,sans-serif;color:#29221c;background:#faf8f5}main{max-width:1200px;margin:auto;padding:clamp(20px,4vw,48px)}h1{font-size:clamp(28px,4vw,42px);line-height:1.1}h2{margin-top:48px}a{color:#854710}p{max-width:85ch}figure{margin:0}figcaption{font-weight:650;margin-bottom:8px}img{display:block;width:100%;height:auto;border:1px solid #d9d2c9}.comparison{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:20px}.single{max-width:1000px}nav ol{columns:2;column-width:240px}section{border-top:1px solid #d9d2c9;margin-top:32px}small{color:#625b54}</style><main><h1>Ledger prototype parity review</h1><p><strong>Corrected and verified · 15 October 2026</strong></p><p>Compared the production app with the selected Variant B Ledger reference images and prototype source. Screenshots use live local test records, so their content differs from the reference fixtures.</p><p>References: <a href="../../../prototype/dashboard-editor/snapshots/ledger-dashboard-desktop.png">dashboard</a> · <a href="../../../prototype/dashboard-editor/snapshots/ledger-summary-desktop.png">summary</a> · <a href="../../../prototype/dashboard-editor/snapshots/ledger-editor-desktop.png">desktop editor</a> · <a href="../../../prototype/dashboard-editor/snapshots/ledger-editor-mobile.png">mobile editor</a>.</p><nav aria-label="Review steps"><ol>
+<li><a href="#01-dashboard">Dashboard</a></li>
+<li><a href="#02-summary">Summary panel</a></li>
+<li><a href="#03-editor">Draft editor</a></li>
+<li><a href="#04-editor-mobile">Draft editor on phone</a></li>
+<li><a href="#05-dashboard-mobile">Dashboard on phone</a></li>
+<li><a href="#06-summary-mobile">Summary on phone</a></li>
+<li><a href="#07-new-document">New document</a></li>
+<li><a href="#08-finalized">Finalized document</a></li>
+<li><a href="#09-editor-tablet">Tablet editor</a></li>
+<li><a href="#10-save-notice">Save confirmation</a></li>
+<li><a href="#11-empty-filter">Filtered empty state</a></li>
+</ol></nav><p>Verification: typecheck and lint passed. Browser checks covered 320, 430, 800, and 1440px widths, search/reset, finalized filtering, summary opening, an unsaved line calculation, and saving an unchanged draft. Production authentication, deletion and reordering controls are retained. Authentication has no selected prototype reference; print output was not visually audited in this pass.</p>
+<section id="01-dashboard"><h2>1. Dashboard</h2><p>Centered content width, separate row arrows, aligned totals, and source navigation icons.</p><div class="comparison">
+<figure><figcaption>Before</figcaption><a href="01-dashboard-before.jpg"><img loading="lazy" src="01-dashboard-before.jpg" alt="Dashboard before layout corrections"></a></figure>
+<figure><figcaption>After</figcaption><a href="01-dashboard-after.jpg"><img loading="lazy" src="01-dashboard-after.jpg" alt="Dashboard after layout corrections"></a></figure>
+</div></section>
+<section id="02-summary"><h2>2. Summary panel</h2><p>Matched panel spacing, typography, and dashboard width while open.</p><div class="comparison">
+<figure><figcaption>Before</figcaption><a href="02-summary-before.jpg"><img loading="lazy" src="02-summary-before.jpg" alt="Summary panel before layout corrections"></a></figure>
+<figure><figcaption>After</figcaption><a href="02-summary-after.jpg"><img loading="lazy" src="02-summary-after.jpg" alt="Summary panel after layout corrections"></a></figure>
+</div></section>
+<section id="03-editor"><h2>3. Draft editor</h2><p>Top-aligned header controls; compact metadata, bold descriptions, arithmetic values without browser indentation, and source icons.</p><div class="comparison">
+<figure><figcaption>Before</figcaption><a href="03-editor-before.jpg"><img loading="lazy" src="03-editor-before.jpg" alt="Draft editor before layout corrections"></a></figure>
+<figure><figcaption>After</figcaption><a href="03-editor-after.jpg"><img loading="lazy" src="03-editor-after.jpg" alt="Draft editor after layout corrections"></a></figure>
+</div></section>
+<section id="04-editor-mobile"><h2>4. Draft editor on phone</h2><p>Two-column numeric fields and stacked arithmetic; Save and Finalize remain below the total.</p><div class="comparison">
+<figure><figcaption>Before</figcaption><a href="04-editor-mobile-before.jpg"><img loading="lazy" src="04-editor-mobile-before.jpg" alt="Draft editor on phone before layout corrections"></a></figure>
+<figure><figcaption>After</figcaption><a href="04-editor-mobile-after.jpg"><img loading="lazy" src="04-editor-mobile-after.jpg" alt="Draft editor on phone after layout corrections"></a></figure>
+</div></section>
+<section id="05-dashboard-mobile"><h2>5. Dashboard on phone</h2><p>Two-column filters with labels above dates; horizontal scrolling stays inside the table.</p><div class="comparison">
+<figure><figcaption>Before</figcaption><a href="05-dashboard-mobile-before.jpg"><img loading="lazy" src="05-dashboard-mobile-before.jpg" alt="Dashboard on phone before layout corrections"></a></figure>
+<figure><figcaption>After</figcaption><a href="05-dashboard-mobile-after.jpg"><img loading="lazy" src="05-dashboard-mobile-after.jpg" alt="Dashboard on phone after layout corrections"></a></figure>
+</div></section>
+<section id="06-summary-mobile"><h2>6. Summary on phone</h2><p>Summary stacks with readable amounts and no page overflow.</p><div class="comparison">
+<figure><figcaption>Before</figcaption><a href="06-summary-mobile-before.jpg"><img loading="lazy" src="06-summary-mobile-before.jpg" alt="Summary on phone before layout corrections"></a></figure>
+<figure><figcaption>After</figcaption><a href="06-summary-mobile-after.jpg"><img loading="lazy" src="06-summary-mobile-after.jpg" alt="Summary on phone after layout corrections"></a></figure>
+</div></section>
+<section id="07-new-document"><h2>7. New document</h2><p>Save as draft stays in the header; shared editor spacing and icons match the source.</p><div class="comparison">
+<figure><figcaption>Before</figcaption><a href="07-new-document-before.jpg"><img loading="lazy" src="07-new-document-before.jpg" alt="New document before layout corrections"></a></figure>
+<figure><figcaption>After</figcaption><a href="07-new-document-after.jpg"><img loading="lazy" src="07-new-document-after.jpg" alt="New document after layout corrections"></a></figure>
+</div></section>
+<section id="08-finalized"><h2>8. Finalized document</h2><p>Header actions align with the title, descriptions retain emphasis, and the snapshot note follows responsive arithmetic.</p><div class="comparison">
+<figure><figcaption>Before</figcaption><a href="08-finalized-before.jpg"><img loading="lazy" src="08-finalized-before.jpg" alt="Finalized document before layout corrections"></a></figure>
+<figure><figcaption>After</figcaption><a href="08-finalized-after.jpg"><img loading="lazy" src="08-finalized-after.jpg" alt="Finalized document after layout corrections"></a></figure>
+</div></section>
+<section id="09-editor-tablet"><h2>9. Tablet editor</h2><p>Five numeric columns remain at 800px; arithmetic stacks below the line items.</p><div class="comparison">
+<figure><figcaption>After</figcaption><a href="09-editor-tablet-after.jpg"><img loading="lazy" src="09-editor-tablet-after.jpg" alt="Tablet editor after layout corrections"></a></figure>
+</div></section>
+<section id="10-save-notice"><h2>10. Save confirmation</h2><p>Success feedback appears in the top banner, consistent with the prototype copy notice.</p><div class="comparison">
+<figure><figcaption>After</figcaption><a href="10-save-notice-after.jpg"><img loading="lazy" src="10-save-notice-after.jpg" alt="Save confirmation after layout corrections"></a></figure>
+</div></section>
+<section id="11-empty-filter"><h2>11. Filtered empty state</h2><p>Clear filters aligns with the empty-state message.</p><div class="comparison">
+<figure><figcaption>After</figcaption><a href="11-empty-filter-after.jpg"><img loading="lazy" src="11-empty-filter-after.jpg" alt="Filtered empty state after layout corrections"></a></figure>
+</div></section>
+</main></html>
