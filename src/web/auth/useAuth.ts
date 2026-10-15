@@ -8,9 +8,12 @@ import { navigate } from '../routing.js';
 type RegistrationValues = { email: string; password: string };
 type AuthMode = 'sign-in' | 'sign-up';
 type AuthOperation = AuthMode | 'sign-out';
+type AuthSession = { user: User | null; generation: number };
 
 export function useAuth() {
-  const [user, setUser] = React.useState<User | null>(null);
+  const [session, setSession] = React.useState<AuthSession>({ user: null, generation: 0 });
+  const currentGeneration = React.useRef(0);
+  const user = session.user;
   const [sessionChecked, setSessionChecked] = React.useState(false);
   const [mode, setMode] = React.useState<AuthMode>('sign-in');
   const [authValues, setAuthValues] = React.useState<RegistrationValues>({ email: '', password: '' });
@@ -21,6 +24,12 @@ export function useAuth() {
   const [sessionError, setSessionError] = React.useState('');
   const [pendingOperation, setPendingOperation] = React.useState<AuthOperation | null>(null);
   const operationInFlight = React.useRef(false);
+
+  const replaceSession = React.useCallback((nextUser: User | null): void => {
+    // Invalidate old request callbacks immediately, before React renders the new session.
+    currentGeneration.current += 1;
+    setSession({ user: nextUser, generation: currentGeneration.current });
+  }, []);
 
   function beginOperation(operation: AuthOperation): boolean {
     // All auth mutations share a cookie. Serialize requests even before React rerenders.
@@ -46,18 +55,19 @@ export function useAuth() {
       .catch(() => null)
       .then(foundUser => {
         if (!active) return;
-        setUser(foundUser);
+        replaceSession(foundUser);
         setSessionChecked(true);
       });
     return () => { active = false; };
-  }, []);
+  }, [replaceSession]);
 
   const onAuthExpired = React.useCallback(() => {
-    setUser(null);
+    if (!session.user || session.generation !== currentGeneration.current) return;
+    replaceSession(null);
     setSessionError('');
     setMode('sign-in');
     setAuthMessage('Your session expired. Sign in to resume editing.');
-  }, []);
+  }, [session, replaceSession]);
 
   async function authenticate(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -86,7 +96,7 @@ export function useAuth() {
         return;
       }
       if (result.user) {
-        setUser(result.user);
+        replaceSession(result.user);
         setSessionError('');
         setAuthValues(current => ({ ...current, password: '' }));
         setAuthMessage('');
@@ -110,7 +120,7 @@ export function useAuth() {
         return;
       }
       if (user) clearUserEditorValues(user.id);
-      setUser(null);
+      replaceSession(null);
       setMode('sign-in');
       setAuthMessage('');
       setAuthValues({ email: '', password: '' });
