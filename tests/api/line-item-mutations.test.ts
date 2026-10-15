@@ -206,6 +206,24 @@ describe('draft line mutations', () => {
     });
   });
 
+  it('accepts uppercase UUID route IDs for a saved line', async () => {
+    const { client } = await signedInClient('line-mutations-uppercase@example.com');
+    const created = await client.fetch(`${baseUrl}/documents`, jsonRequest('POST', {
+      title: 'Case normalized IDs', issueDate: '2026-10-14',
+    }));
+    const document = await created.json() as { id: string };
+    const inserted = await client.fetch(`${baseUrl}/documents/${document.id}/line-items`, jsonRequest('POST', {
+      quantity: 1, unitPriceCents: 100,
+    }));
+    const line = await inserted.json() as Line;
+    const response = await client.fetch(
+      `${baseUrl}/documents/${document.id.toUpperCase()}/line-items/${line.id.toUpperCase()}`,
+      jsonRequest('PATCH', { description: 'Updated' }),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ id: line.id, description: 'Updated' });
+  });
+
   it('returns same 404 for foreign and missing document or line IDs', async () => {
     const ownerA = await signedInClient('line-mutations-owner-a@example.com');
     const ownerB = await signedInClient('line-mutations-owner-b@example.com');

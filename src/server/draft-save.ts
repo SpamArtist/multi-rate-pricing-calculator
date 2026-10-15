@@ -3,13 +3,16 @@ import { and, asc, eq, sql } from 'drizzle-orm';
 import { json, type Request, type RequestHandler } from 'express';
 import { documents, draftSaveMutations, lineItems } from '../db/schema.js';
 import { withTenantTransaction, type AuthenticatedOwnerId } from '../db/client.js';
-import { isCalendarDate } from '../shared/document-validation.js';
 import { amountsWithinSafeRange, calculatePricing } from '../shared/pricing.js';
 import { authenticatedOwnerId } from './auth.js';
 import type { Clock } from './clock.js';
 import { serializeDocument } from './document-projection.js';
+import {
+  fields as createFields, inputError, isRecord, linePricingErrors, parseAmount, parseCustomerName,
+  parseDescription, parseIssueDate, parseQuantity, parseTaxRate, parseTitle, parseUuid, rejectUnknownFields,
+  type Fields,
+} from './document-input.js';
 
-type Fields = Record<string, string>;
 type DraftLine = {
   id?: string;
   description: string;
@@ -27,32 +30,33 @@ type DraftSave = {
   lineItems: DraftLine[];
 };
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const LINE_FIELDS = ['id', 'description', 'quantity', 'unitPriceCents', 'discountCents', 'taxRateBasisPoints'];
 const DOCUMENT_FIELDS = ['mutationId', 'documentId', 'title', 'customerName', 'issueDate', 'lineItems'];
 
 class MissingDraft extends Error {}
 class FinalizedDraft extends Error {}
 
-function record(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
 function parseDraftSave(body: unknown): { values?: DraftSave; fields: Fields } {
-  const fields: Fields = {};
-  if (!record(body)) return { fields: { body: 'Send a document object.' } };
-  for (const key of Object.keys(body)) {
-    if (!DOCUMENT_FIELDS.includes(key)) fields[key] = 'This field is not allowed.';
+  const fields = createFields();
+  if (!isRecord(body)) {
+    fields.body = 'Send a document object.';
+    return { fields };
   }
-  if (typeof body.mutationId !== 'string' || !UUID.test(body.mutationId)) {
+  rejectUnknownFields(body, DOCUMENT_FIELDS, fields);
+  const mutationId = parseUuid(body.mutationId);
+  const documentId = body.documentId === undefined ? undefined : parseUuid(body.documentId);
+  const title = parseTitle(body.title);
+  const customerName = parseCustomerName(body.customerName);
+  const issueDate = parseIssueDate(body.issueDate);
+  if (mutationId === undefined) {
     fields.mutationId = 'Provide a valid mutation ID.';
   }
-  if (body.documentId !== undefined && (typeof body.documentId !== 'string' || !UUID.test(body.documentId))) {
+  if (body.documentId !== undefined && documentId === undefined) {
     fields.documentId = 'Provide a valid document ID.';
   }
-  if (typeof body.title !== 'string' || body.title.trim() === '') fields.title = 'Enter a document name.';
-  if (typeof body.customerName !== 'string') fields.customerName = 'Enter a customer name.';
-  if (!isCalendarDate(body.issueDate)) fields.issueDate = 'Enter a valid calendar date.';
+  if (title === undefined) fields.title = inputError.title;
+  if (customerName === undefined) fields.customerName = inputError.customerName;
+  if (issueDate === undefined) fields.issueDate = inputError.issueDate;
   if (!Array.isArray(body.lineItems)) fields.lineItems = 'Send an ordered list of line items.';
   else if (body.lineItems.length > 2_147_483_647) fields.lineItems = 'This draft contains too many line items.';
 
@@ -62,67 +66,56 @@ function parseDraftSave(body: unknown): { values?: DraftSave; fields: Fields } {
   if (Array.isArray(body.lineItems)) {
     for (const [index, value] of body.lineItems.entries()) {
       const path = `lineItems[${index}]`;
-      if (!record(value)) {
+      if (!isRecord(value)) {
         fields[path] = 'Send a line item object.';
         continue;
       }
-      for (const key of Object.keys(value)) {
-        if (!LINE_FIELDS.includes(key)) fields[`${path}.${key}`] = 'This field is not allowed.';
-      }
+      const lineFields = createFields();
+      rejectUnknownFields(value, LINE_FIELDS, lineFields);
+      const id = value.id === undefined ? undefined : parseUuid(value.id);
       if (value.id !== undefined) {
-        if (typeof value.id !== 'string' || !UUID.test(value.id)) fields[`${path}.id`] = 'Provide a valid line item ID.';
-        else if (seenIds.has(value.id.toLowerCase())) fields[`${path}.id`] = 'Use each saved line item once.';
-        else seenIds.add(value.id.toLowerCase());
+        if (id === undefined) lineFields.id = 'Provide a valid line item ID.';
+        else if (seenIds.has(id)) lineFields.id = 'Use each saved line item once.';
+        else seenIds.add(id);
       }
-      if (typeof value.description !== 'string') fields[`${path}.description`] = 'Enter a line description.';
-      if (typeof value.quantity !== 'number' || !Number.isSafeInteger(value.quantity) || value.quantity < 1) {
-        fields[`${path}.quantity`] = 'Enter a positive whole quantity.';
-      }
-      if (typeof value.unitPriceCents !== 'number' || !Number.isSafeInteger(value.unitPriceCents) || value.unitPriceCents < 0) {
-        fields[`${path}.unitPriceCents`] = 'Enter a nonnegative whole amount in cents.';
-      }
-      if (typeof value.discountCents !== 'number' || !Number.isSafeInteger(value.discountCents) || value.discountCents < 0) {
-        fields[`${path}.discountCents`] = 'Enter a nonnegative whole amount in cents.';
-      }
-      if (typeof value.taxRateBasisPoints !== 'number' || !Number.isSafeInteger(value.taxRateBasisPoints)
-        || value.taxRateBasisPoints < 0 || value.taxRateBasisPoints > 10_000) {
-        fields[`${path}.taxRateBasisPoints`] = 'Enter a whole tax rate from 0 to 10000 basis points.';
-      }
-      if (Object.keys(fields).some(field => field.startsWith(path))) continue;
+      const description = parseDescription(value.description);
+      const quantity = parseQuantity(value.quantity);
+      const unitPriceCents = parseAmount(value.unitPriceCents);
+      const discountCents = parseAmount(value.discountCents);
+      const taxRateBasisPoints = parseTaxRate(value.taxRateBasisPoints);
+      if (description === undefined) lineFields.description = inputError.description;
+      if (quantity === undefined) lineFields.quantity = inputError.quantity;
+      if (unitPriceCents === undefined) lineFields.unitPriceCents = inputError.amount;
+      if (discountCents === undefined) lineFields.discountCents = inputError.amount;
+      if (taxRateBasisPoints === undefined) lineFields.taxRateBasisPoints = inputError.taxRateBasisPoints;
+      for (const [field, message] of Object.entries(lineFields)) fields[`${path}.${field}`] = message;
+      if (Object.keys(lineFields).length > 0 || description === undefined || quantity === undefined
+        || unitPriceCents === undefined || discountCents === undefined || taxRateBasisPoints === undefined) continue;
       const line: DraftLine = {
-        ...(value.id === undefined ? {} : { id: (value.id as string).toLowerCase() }),
-        description: (value.description as string).trim(),
-        quantity: BigInt(value.quantity as number),
-        unitPriceCents: BigInt(value.unitPriceCents as number),
-        discountCents: BigInt(value.discountCents as number),
-        taxRateBasisPoints: value.taxRateBasisPoints as number,
+        ...(id === undefined ? {} : { id }),
+        description, quantity, unitPriceCents, discountCents, taxRateBasisPoints,
       };
       parsedLines.push(line);
       parsedLineIndices.push(index);
     }
   }
   const pricing = calculatePricing(parsedLines);
-  for (const [index, priced] of pricing.lines.entries()) {
+  for (const [index] of pricing.lines.entries()) {
     const path = `lineItems[${parsedLineIndices[index]}]`;
-    if (priced.discountExceedsSubtotal) {
-      fields[`${path}.discountCents`] = 'Discount cannot exceed the line subtotal.';
-    }
-    if (!priced.withinSafeRange) {
-      fields[`${path}.body`] = 'Line amounts exceed the supported safe integer range.';
-    }
+    const pricingFields = linePricingErrors(parsedLines[index]);
+    for (const [field, message] of Object.entries(pricingFields)) fields[`${path}.${field}`] = message;
   }
   if (Object.keys(fields).length === 0 && !amountsWithinSafeRange(pricing.amounts)) {
     fields.body = 'Document amounts exceed the supported safe integer range.';
   }
-  if (Object.keys(fields).length > 0) return { fields };
+  if (Object.keys(fields).length > 0 || mutationId === undefined || title === undefined
+    || customerName === undefined || issueDate === undefined) return { fields };
   return {
     fields,
     values: {
-      mutationId: (body.mutationId as string).toLowerCase(),
-      ...(body.documentId === undefined ? {} : { documentId: (body.documentId as string).toLowerCase() }),
-      title: (body.title as string).trim(),
-      customerName: (body.customerName as string).trim(),
-      issueDate: body.issueDate as string,
+      mutationId,
+      ...(documentId === undefined ? {} : { documentId }),
+      title, customerName, issueDate,
       lineItems: parsedLines,
     },
   };

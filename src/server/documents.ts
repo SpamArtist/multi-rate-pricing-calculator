@@ -12,8 +12,12 @@ import {
 } from '../shared/pricing.js';
 import { databaseLineInput, projectDocumentSummaries, serializeDocument, serializeLineItem } from './document-projection.js';
 import { type Clock } from './clock.js';
+import {
+  fields as createFields, inputError, isRecord, linePricingErrors, MAX_DATABASE_INTEGER,
+  parseAmount, parseCustomerName, parseDescription, parseIssueDate, parsePosition, parseQuantity,
+  parseTaxRate, parseTitle, parseUuid, rejectUnknownFields, type Fields,
+} from './document-input.js';
 
-type Fields = Record<string, string>;
 type DocumentFields = {
   title: string;
   customerName: string;
@@ -104,9 +108,6 @@ function parseDocumentListQuery(request: Request): { fields: Fields; values?: Do
   };
 }
 
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const MAX_DATABASE_INTEGER = 2_147_483_647;
-
 type DocumentListStatus = 'all' | 'draft' | 'finalized';
 type DocumentListSort = 'desc' | 'asc';
 type DocumentListQuery = {
@@ -133,20 +134,14 @@ type DraftLineMutation =
   | { kind: 'finalized' }
   | { kind: 'draft'; documentId: string; lines: (typeof lineItems.$inferSelect)[] };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 function parseFields(body: unknown, allowed: readonly string[], required: readonly string[] = []): { fields: Fields; values?: Partial<DocumentFields> } {
-  const fields = Object.create(null) as Fields;
+  const fields = createFields();
   if (!isRecord(body)) {
     fields.body = 'Send a document object.';
     return { fields };
   }
 
-  for (const key of Object.keys(body)) {
-    if (!allowed.includes(key)) fields[key] = 'This field is not allowed.';
-  }
+  rejectUnknownFields(body, allowed, fields);
   if (required.length === 0 && Object.keys(body).length === 0) {
     fields.body = 'Update at least one document field.';
   }
@@ -155,25 +150,26 @@ function parseFields(body: unknown, allowed: readonly string[], required: readon
   for (const key of allowed) {
     const isRequired = required.includes(key);
     if (!Object.hasOwn(body, key)) {
-      if (isRequired) fields[key] = key === 'issueDate' ? 'Enter a valid calendar date.' : 'Enter a document name.';
+      if (isRequired) fields[key] = key === 'issueDate' ? inputError.issueDate
+        : key === 'customerName' ? inputError.customerName : inputError.title;
       continue;
     }
 
-    const value = body[key];
     if (key === 'issueDate') {
-      if (!isCalendarDate(value)) fields.issueDate = 'Enter a valid calendar date.';
-      else values.issueDate = value;
+      const date = parseIssueDate(body[key]);
+      if (date === undefined) fields.issueDate = inputError.issueDate;
+      else values.issueDate = date;
       continue;
     }
-
-    if (typeof value !== 'string') {
-      fields[key] = key === 'title' ? 'Enter a document name.' : 'Enter a customer name.';
-      continue;
+    if (key === 'title') {
+      const title = parseTitle(body[key]);
+      if (title === undefined) fields.title = inputError.title;
+      else values.title = title;
+    } else {
+      const customerName = parseCustomerName(body[key]);
+      if (customerName === undefined) fields.customerName = inputError.customerName;
+      else values.customerName = customerName;
     }
-    const trimmed = value.trim();
-    if (key === 'title' && trimmed.length === 0) fields.title = 'Enter a document name.';
-    else if (key === 'title') values.title = trimmed;
-    else values.customerName = trimmed;
   }
   return Object.keys(fields).length > 0 ? { fields } : { fields, values };
 }
@@ -189,16 +185,14 @@ function sendNotFound(response: Parameters<RequestHandler>[1]): void {
 }
 
 function parseLineFields(body: unknown, required: readonly string[] = []): { fields: Fields; values?: ParsedLineValues } {
-  const fields = Object.create(null) as Fields;
+  const fields = createFields();
   if (!isRecord(body)) {
     fields.body = 'Send a line item object.';
     return { fields };
   }
 
   const allowed = ['description', 'quantity', 'unitPriceCents', 'discountCents', 'taxRateBasisPoints', 'position'];
-  for (const key of Object.keys(body)) {
-    if (!allowed.includes(key)) fields[key] = 'This field is not allowed.';
-  }
+  rejectUnknownFields(body, allowed, fields);
   if (required.length === 0 && Object.keys(body).length === 0) {
     fields.body = 'Update at least one line item field.';
   }
@@ -207,27 +201,31 @@ function parseLineFields(body: unknown, required: readonly string[] = []): { fie
   for (const key of allowed) {
     const isRequired = required.includes(key);
     if (!Object.hasOwn(body, key)) {
-      if (isRequired) fields[key] = key === 'quantity' ? 'Enter a positive whole quantity.' : 'Enter a nonnegative whole amount in cents.';
+      if (isRequired) fields[key] = key === 'quantity' ? inputError.quantity : inputError.amount;
       continue;
     }
 
-    const value = body[key];
     if (key === 'description') {
-      if (typeof value !== 'string') fields.description = 'Enter a line description.';
-      else values.description = value.trim();
+      const description = parseDescription(body[key]);
+      if (description === undefined) fields.description = inputError.description;
+      else values.description = description;
     } else if (key === 'quantity') {
-      if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) fields.quantity = 'Enter a positive whole quantity.';
-      else values.quantity = BigInt(value);
+      const quantity = parseQuantity(body[key]);
+      if (quantity === undefined) fields.quantity = inputError.quantity;
+      else values.quantity = quantity;
     } else if (key === 'unitPriceCents' || key === 'discountCents') {
-      if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) fields[key] = 'Enter a nonnegative whole amount in cents.';
-      else values[key] = BigInt(value);
+      const amount = parseAmount(body[key]);
+      if (amount === undefined) fields[key] = inputError.amount;
+      else values[key] = amount;
     } else if (key === 'taxRateBasisPoints') {
-      if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0 || value > 10_000) {
-        fields.taxRateBasisPoints = 'Enter a whole tax rate from 0 to 10000 basis points.';
-      } else values.taxRateBasisPoints = value;
-    } else if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1 || value > MAX_DATABASE_INTEGER) {
-      fields.position = 'Enter a valid line position.';
-    } else values.position = value;
+      const taxRate = parseTaxRate(body[key]);
+      if (taxRate === undefined) fields.taxRateBasisPoints = inputError.taxRateBasisPoints;
+      else values.taxRateBasisPoints = taxRate;
+    } else {
+      const position = parsePosition(body[key]);
+      if (position === undefined) fields.position = inputError.position;
+      else values.position = position;
+    }
   }
 
   return Object.keys(fields).length > 0 ? { fields } : { fields, values };
@@ -241,18 +239,6 @@ function completeLineInput(values: ParsedLineValues): CompleteLineInput {
     discountCents: values.discountCents ?? 0n,
     taxRateBasisPoints: values.taxRateBasisPoints ?? 0,
   };
-}
-
-function lineValidation(input: CompleteLineInput): Fields {
-  const fields = Object.create(null) as Fields;
-  const priced = calculatePricing([input]).lines[0];
-  if (priced.discountExceedsSubtotal) {
-    fields.discountCents = 'Discount cannot exceed the line subtotal.';
-  }
-  if (!priced.withinSafeRange) {
-    fields.body = 'Line amounts exceed the supported safe integer range.';
-  }
-  return fields;
 }
 
 async function lockDraftLines(transaction: TenantTransaction, documentId: string): Promise<DraftLineMutation> {
@@ -381,13 +367,14 @@ export function createDocumentsRouter(clock: Clock): Router {
 
   router.post('/', json({ limit: '64kb' }), async (request, response, next) => {
     const parsed = parseFields(request.body, ['title', 'issueDate', 'customerName'], ['title', 'issueDate']);
-    if (!parsed.values || Object.keys(parsed.fields).length > 0) {
+    if (!parsed.values || parsed.values.title === undefined || parsed.values.issueDate === undefined
+      || Object.keys(parsed.fields).length > 0) {
       sendValidation(response, parsed.fields);
       return;
     }
 
     const ownerId = requestOwnerId(request);
-    const values = parsed.values as DocumentFields;
+    const values = parsed.values;
     try {
       const document = await withTenantTransaction(ownerId, async transaction => {
         const inserted = await transaction.execute<{ id: string }>(sql`
@@ -407,7 +394,7 @@ export function createDocumentsRouter(clock: Clock): Router {
   });
 
   router.get('/:id', async (request, response, next) => {
-    if (!UUID_PATTERN.test(request.params.id)) {
+    if (!parseUuid(request.params.id)) {
       sendNotFound(response);
       return;
     }
@@ -435,7 +422,7 @@ export function createDocumentsRouter(clock: Clock): Router {
       sendValidation(response, parsed.fields);
       return;
     }
-    if (!UUID_PATTERN.test(request.params.id)) {
+    if (!parseUuid(request.params.id)) {
       sendNotFound(response);
       return;
     }
@@ -475,7 +462,7 @@ export function createDocumentsRouter(clock: Clock): Router {
   });
 
   router.delete('/:id', async (request, response, next) => {
-    if (!UUID_PATTERN.test(request.params.id)) {
+    if (!parseUuid(request.params.id)) {
       sendNotFound(response);
       return;
     }
@@ -525,7 +512,7 @@ export function createDocumentsRouter(clock: Clock): Router {
       sendValidation(response, fields);
       return;
     }
-    if (!UUID_PATTERN.test(request.params.id)) {
+    if (!parseUuid(request.params.id)) {
       sendNotFound(response);
       return;
     }
@@ -591,7 +578,7 @@ export function createDocumentsRouter(clock: Clock): Router {
       sendValidation(response, fields);
       return;
     }
-    if (!UUID_PATTERN.test(request.params.id)) {
+    if (!parseUuid(request.params.id)) {
       sendNotFound(response);
       return;
     }
@@ -694,13 +681,13 @@ export function createDocumentsRouter(clock: Clock): Router {
       sendValidation(response, parsed.fields);
       return;
     }
-    if (!UUID_PATTERN.test(request.params.id)) {
+    if (!parseUuid(request.params.id)) {
       sendNotFound(response);
       return;
     }
 
     const input = completeLineInput(parsed.values);
-    const inputErrors = lineValidation(input);
+    const inputErrors = linePricingErrors(input);
     if (Object.keys(inputErrors).length > 0) {
       sendValidation(response, inputErrors);
       return;
@@ -761,7 +748,8 @@ export function createDocumentsRouter(clock: Clock): Router {
       sendValidation(response, parsed.fields);
       return;
     }
-    if (!UUID_PATTERN.test(request.params.id) || !UUID_PATTERN.test(request.params.lineItemId)) {
+    const lineItemId = parseUuid(request.params.lineItemId);
+    if (!parseUuid(request.params.id) || !lineItemId) {
       sendNotFound(response);
       return;
     }
@@ -771,7 +759,7 @@ export function createDocumentsRouter(clock: Clock): Router {
       const result = await withTenantTransaction(ownerId, async transaction => {
         const locked = await lockDraftLines(transaction, request.params.id);
         if (locked.kind !== 'draft') return locked;
-        const current = locked.lines.find(line => line.id === request.params.lineItemId);
+        const current = locked.lines.find(line => line.id === lineItemId);
         if (!current) return { kind: 'line_missing' as const };
 
         const input = {
@@ -781,7 +769,7 @@ export function createDocumentsRouter(clock: Clock): Router {
           discountCents: parsed.values!.discountCents ?? current.discountCents,
           taxRateBasisPoints: parsed.values!.taxRateBasisPoints ?? current.taxRateBasisPoints,
         };
-        const inputErrors = lineValidation(input);
+        const inputErrors = linePricingErrors(input);
         const newPosition = parsed.values!.position ?? current.position;
         if (newPosition > locked.lines.length) {
           inputErrors.position = 'Position must be between 1 and the current line count.';
@@ -828,7 +816,8 @@ export function createDocumentsRouter(clock: Clock): Router {
   });
 
   router.delete('/:id/line-items/:lineItemId', async (request, response, next) => {
-    if (!UUID_PATTERN.test(request.params.id) || !UUID_PATTERN.test(request.params.lineItemId)) {
+    const lineItemId = parseUuid(request.params.lineItemId);
+    if (!parseUuid(request.params.id) || !lineItemId) {
       sendNotFound(response);
       return;
     }
@@ -838,7 +827,7 @@ export function createDocumentsRouter(clock: Clock): Router {
       const result = await withTenantTransaction(ownerId, async transaction => {
         const locked = await lockDraftLines(transaction, request.params.id);
         if (locked.kind !== 'draft') return locked;
-        const current = locked.lines.find(line => line.id === request.params.lineItemId);
+        const current = locked.lines.find(line => line.id === lineItemId);
         if (!current) return { kind: 'line_missing' as const };
 
         await transaction.delete(lineItems).where(eq(lineItems.id, current.id));

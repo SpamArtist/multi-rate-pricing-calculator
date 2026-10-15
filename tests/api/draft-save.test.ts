@@ -140,6 +140,42 @@ describe('atomic draft save', () => {
     expect((await corrected.json() as Document).lineItems).toHaveLength(2);
   });
 
+  it('rejects unknown prototype-named fields at document and line level', async () => {
+    const client = await signIn('aggregate-prototype-fields@example.com');
+    for (const payload of [
+      `{"mutationId":"${randomUUID()}","title":"Draft","customerName":"Customer","issueDate":"2026-10-14","lineItems":[],"__proto__":"unknown"}`,
+      `{"mutationId":"${randomUUID()}","title":"Draft","customerName":"Customer","issueDate":"2026-10-14","lineItems":[{"description":"Line","quantity":1,"unitPriceCents":100,"discountCents":0,"taxRateBasisPoints":0,"__proto__":"unknown"}]}`,
+    ]) {
+      const response = await client.fetch(`${baseUrl}/documents/draft-save`, {
+        method: 'POST', headers: { origin: baseUrl, 'content-type': 'application/json' }, body: payload,
+      });
+      expect(response.status).toBe(422);
+      const fields = (await response.json() as { error: { fields: Record<string, string> } }).error.fields;
+      expect(Object.keys(fields).some(key => key.endsWith('__proto__'))).toBe(true);
+    }
+  });
+
+  it('uses the same numeric line rules as legacy line insertion', async () => {
+    const client = await signIn('aggregate-validation-parity@example.com');
+    const created = await client.fetch(`${baseUrl}/documents`, request({
+      title: 'Legacy draft', issueDate: '2026-10-14',
+    }));
+    expect(created.status).toBe(201);
+    const legacyId = (await created.json() as Document).id;
+    for (const [field, invalidValue] of [
+      ['quantity', 0], ['unitPriceCents', -1], ['discountCents', 101], ['taxRateBasisPoints', 10_001],
+    ] as const) {
+      const invalidLine = { ...line('Line'), [field]: invalidValue };
+      const aggregate = await save(client, body([invalidLine]));
+      const legacy = await client.fetch(`${baseUrl}/documents/${legacyId}/line-items`, request(invalidLine));
+      expect(aggregate.status).toBe(422);
+      expect(legacy.status).toBe(422);
+      const aggregateFields = (await aggregate.json() as { error: { fields: Record<string, string> } }).error.fields;
+      const legacyFields = (await legacy.json() as { error: { fields: Record<string, string> } }).error.fields;
+      expect(aggregateFields[`lineItems[0].${field}`]).toBe(legacyFields[field]);
+    }
+  });
+
   it('rejects invalid, duplicate, missing, and foreign line IDs without modifying either owner', async () => {
     const a = await signIn('aggregate-ids-a@example.com');
     const b = await signIn('aggregate-ids-b@example.com');
