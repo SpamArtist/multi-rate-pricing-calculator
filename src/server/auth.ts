@@ -134,27 +134,39 @@ function readSessionToken(cookieHeader: string | undefined): string | undefined 
   return undefined;
 }
 
-/** Refresh a cookie session and return its trusted owner identity for tenant routes. */
-export async function authenticatedOwnerId(request: Request, clock: Clock): Promise<AuthenticatedOwnerId | undefined> {
+interface AuthenticatedUser {
+  id: AuthenticatedOwnerId;
+  email: string;
+}
+
+/** Atomically validate and refresh one cookie session for auth and tenant routes. */
+async function resolveSession(request: Request, clock: Clock): Promise<AuthenticatedUser | undefined> {
   const token = readSessionToken(request.headers.cookie);
   if (!token) return undefined;
 
   const tokenHash = createHash('sha256').update(token).digest('hex');
   const now = clock.now();
-  const refreshed = await db.execute<{ user_id: string }>(sql`
-    UPDATE sessions
-    SET last_activity_at = GREATEST(last_activity_at, ${now})
-    WHERE token_hash = ${tokenHash}
-      AND last_activity_at > ${new Date(now.getTime() - SESSION_IDLE_MS)}
-      AND expires_at > ${now}
-    RETURNING user_id
+  const refreshed = await db.execute<{ id: string; email: string }>(sql`
+    UPDATE sessions AS session
+    SET last_activity_at = GREATEST(session.last_activity_at, ${now})
+    FROM users AS owner
+    WHERE session.user_id = owner.id
+      AND session.token_hash = ${tokenHash}
+      AND session.last_activity_at > ${new Date(now.getTime() - SESSION_IDLE_MS)}
+      AND session.expires_at > ${now}
+    RETURNING owner.id, owner.email_display AS email
   `);
-  const ownerId = refreshed.rows[0]?.user_id;
-  if (!ownerId) {
+  const user = refreshed.rows[0];
+  if (!user) {
     await db.delete(sessions).where(eq(sessions.tokenHash, tokenHash));
     return undefined;
   }
-  return ownerId as AuthenticatedOwnerId;
+  return { id: user.id as AuthenticatedOwnerId, email: user.email };
+}
+
+/** Refresh a cookie session and return its trusted owner identity for tenant routes. */
+export async function authenticatedOwnerId(request: Request, clock: Clock): Promise<AuthenticatedOwnerId | undefined> {
+  return (await resolveSession(request, clock))?.id;
 }
 
 function isEmailUniqueConflict(error: unknown): boolean {
@@ -306,34 +318,14 @@ export function createAuthRouter(
   });
 
   router.get('/session', async (request, response, next) => {
-    const token = readSessionToken(request.headers.cookie);
-    if (!token) {
-      if (request.headers.cookie?.includes(`${SESSION_COOKIE}=`)) response.append('Set-Cookie', clearSessionCookie());
-      unauthenticated(response);
-      return;
-    }
-
-    const tokenHash = createHash('sha256').update(token).digest('hex');
-    const now = clock.now();
     try {
-      const refreshed = await db.execute<{ id: string; email: string }>(sql`
-        UPDATE sessions AS session
-        SET last_activity_at = GREATEST(session.last_activity_at, ${now})
-        FROM users AS owner
-        WHERE session.user_id = owner.id
-          AND session.token_hash = ${tokenHash}
-          AND session.last_activity_at > ${new Date(now.getTime() - SESSION_IDLE_MS)}
-          AND session.expires_at > ${now}
-        RETURNING owner.id, owner.email_display AS email
-      `);
-      const user = refreshed.rows[0];
+      const user = await resolveSession(request, clock);
       if (!user) {
-        await db.delete(sessions).where(eq(sessions.tokenHash, tokenHash));
-        response.append('Set-Cookie', clearSessionCookie());
+        if (request.headers.cookie?.includes(`${SESSION_COOKIE}=`)) response.append('Set-Cookie', clearSessionCookie());
         unauthenticated(response);
         return;
       }
-      response.status(200).json({ user: { id: user.id, email: user.email } });
+      response.status(200).json({ user });
     } catch (error) {
       next(error);
     }

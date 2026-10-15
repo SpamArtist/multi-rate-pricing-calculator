@@ -196,6 +196,100 @@ describe('sign-in sessions', () => {
     expect(await migrationPool.query('SELECT id FROM sessions WHERE user_id = $1', [ownerId])).toMatchObject({ rows: [] });
   });
 
+  it('uses the same exact idle and absolute boundaries for session and tenant routes', async () => {
+    const idleMs = 24 * 60 * 60 * 1000;
+    const unauthenticated = { error: { code: 'unauthenticated', message: 'Sign in to continue.' } };
+    const tenantUrl = `${baseUrl}/documents`;
+    const sessionUrl = `${baseUrl}/auth/session`;
+
+    for (const [validUrl, expiredUrl] of [
+      [tenantUrl, sessionUrl],
+      [sessionUrl, tenantUrl],
+    ]) {
+      const client = createApiSession();
+      expect((await signIn(client)).status).toBe(200);
+      clock.advance(idleMs - 1);
+      expect((await client.fetch(validUrl)).status).toBe(200);
+      clock.advance(idleMs);
+      const expired = await client.fetch(expiredUrl);
+      expect(expired.status).toBe(401);
+      expect(await expired.json()).toEqual(unauthenticated);
+    }
+
+    for (const [validUrl, expiredUrl] of [
+      [tenantUrl, sessionUrl],
+      [sessionUrl, tenantUrl],
+    ]) {
+      const client = createApiSession();
+      expect((await signIn(client)).status).toBe(200);
+      for (let day = 0; day < 7; day++) {
+        clock.advance(23 * 60 * 60 * 1000);
+        expect((await client.fetch(validUrl)).status).toBe(200);
+      }
+      clock.advance(7 * 60 * 60 * 1000 - 1);
+      expect((await client.fetch(validUrl)).status).toBe(200);
+      clock.advance(1);
+      const expired = await client.fetch(expiredUrl);
+      expect(expired.status).toBe(401);
+      expect(await expired.json()).toEqual(unauthenticated);
+    }
+  });
+
+  it('keeps concurrent refreshes monotonic across auth and tenant routes', async () => {
+    const signedIn = await signIn(createApiSession());
+    expect(signedIn.status).toBe(200);
+    const cookie = signedIn.headers.getSetCookie()[0].split(';', 1)[0];
+    const originalActivity = clock.now();
+    clock.advance(10 * 60 * 1000);
+    const laterClock = new TestClock(new Date(originalActivity.getTime() + 60 * 60 * 1000));
+    const laterServer = createServer(createApp(undefined, laterClock));
+    const laterUrl = await listen(laterServer);
+
+    try {
+      const [earlier, later] = await Promise.all([
+        fetch(`${baseUrl}/documents`, { headers: { cookie } }),
+        fetch(`${laterUrl}/auth/session`, { headers: { cookie } }),
+      ]);
+      expect(earlier.status).toBe(200);
+      expect(later.status).toBe(200);
+      expect(await later.json()).toEqual({ user: { id: ownerId, email: emailDisplay } });
+
+      const activity = await migrationPool.query<{ last_activity_at: Date }>(
+        'SELECT last_activity_at FROM sessions WHERE user_id = $1', [ownerId],
+      );
+      expect(activity.rows[0].last_activity_at.getTime()).toBe(laterClock.now().getTime());
+      expect((await fetch(`${baseUrl}/auth/session`, { headers: { cookie } })).status).toBe(200);
+      const afterOlderRefresh = await migrationPool.query<{ last_activity_at: Date }>(
+        'SELECT last_activity_at FROM sessions WHERE user_id = $1', [ownerId],
+      );
+      expect(afterOlderRefresh.rows[0].last_activity_at.getTime()).toBe(laterClock.now().getTime());
+    } finally {
+      await close(laterServer);
+    }
+  });
+
+  it('applies session expiry to documents, reports, and atomic draft saves', async () => {
+    for (const { path, init, validStatus } of [
+      { path: '/documents', init: undefined, validStatus: 200 },
+      { path: '/reports/summary?start=2026-10-01&end=2026-10-31', init: undefined, validStatus: 200 },
+      {
+        path: '/documents/draft-save',
+        init: { method: 'POST', headers: { origin: baseUrl, 'content-type': 'application/json' }, body: '{}' },
+        validStatus: 422,
+      },
+    ]) {
+      const client = createApiSession();
+      expect((await signIn(client)).status).toBe(200);
+      expect((await client.fetch(`${baseUrl}${path}`, init)).status).toBe(validStatus);
+      clock.advance(24 * 60 * 60 * 1000);
+      const expired = await client.fetch(`${baseUrl}${path}`, init);
+      expect(expired.status).toBe(401);
+      expect(await expired.json()).toEqual({
+        error: { code: 'unauthenticated', message: 'Sign in to continue.' },
+      });
+    }
+  });
+
   it('throttles canonical email and IP attempts, then allows requests after window', async () => {
     await close(server);
     await startServer({ maxRequests: 2, windowMs: 60_000 });
