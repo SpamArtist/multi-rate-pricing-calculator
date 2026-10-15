@@ -1466,6 +1466,11 @@ function DocumentEditor({
     : previewAmounts;
 
   return (
+    <>
+    {duplicateCopyId && message === 'Draft duplicated.' && <p className="document-notice" role="status">
+      Draft duplicated.{' '}
+      <a href={`#/documents/${encodeURIComponent(duplicateCopyId)}`}>Open copy →</a>
+    </p>}
     <main className="ledger-page" data-testid="document-editor">
       <button className="back-link" type="button" onClick={() => navigate('/documents')}>← All documents</button>
       <form className="document-form" noValidate onSubmit={event => { event.preventDefault(); void saveDraft(); }}>
@@ -1505,11 +1510,10 @@ function DocumentEditor({
         </header>
 
         {loadError && <p className="request-error" role="alert">{loadError}</p>}
-        {message && <p
+        {message && !(duplicateCopyId && message === 'Draft duplicated.') && <p
           className={message === 'Draft saved.' || message === 'Draft duplicated.' || message.startsWith('Document finalized.') ? 'success-message' : 'request-error'}
           role={message === 'Draft saved.' || message === 'Draft duplicated.' || message.startsWith('Document finalized.') ? 'status' : 'alert'}
         >{message}</p>}
-        {duplicateCopyId && <a className="back-link" href={`#/documents/${encodeURIComponent(duplicateCopyId)}`}>Open copy →</a>}
 
         <section className="metadata editor-section" aria-labelledby="metadata-heading">
           <div className="section-heading">
@@ -1587,7 +1591,11 @@ function DocumentEditor({
                     disabled={!canEdit || pending}
                     aria-invalid={Boolean(error)}
                     aria-describedby={error ? errorId : undefined}
-                    onChange={event => changeLine(line.key, name, event.currentTarget.value)}
+                    onChange={event => {
+                      const value = event.currentTarget.value;
+                      // Allow unfinished numeric edits; existing validation checks their final format and range.
+                      if (/^[\d.,+\s-]*$/.test(value)) changeLine(line.key, name, value);
+                    }}
                   />
                   {error && <p className="field-error" id={errorId} role="alert">{error}</p>}
                 </div>
@@ -1610,7 +1618,18 @@ function DocumentEditor({
                     />
                     {serverLineErrors[line.key]?.description && <p className="field-error" id={`line-${line.key}-description-error`} role="alert">{serverLineErrors[line.key].description}</p>}
                   </div>
-                  {canEdit && <div className="line-actions" aria-label={`Line ${index + 1} actions`}>
+                </div>
+                <div className="line-fields">
+                  {field('quantity', 'Qty', 'numeric')}
+                  {field('unitPrice', 'Unit price €', 'decimal')}
+                  {field('discount', 'Discount €', 'decimal')}
+                  {field('taxRate', 'Tax %', 'decimal')}
+                  <div className="line-sum">
+                    <span>Line total</span>
+                    <strong>{preview.amounts ? formatEuro(preview.amounts.totalCents) : '—'}</strong>
+                  </div>
+                </div>
+                {canEdit && <div className="line-actions" aria-label={`Line ${index + 1} actions`}>
                     <button
                       className="line-action"
                       type="button"
@@ -1632,18 +1651,7 @@ function DocumentEditor({
                       disabled={pending}
                       onClick={() => removeLine(line.key)}
                     >×</button>
-                  </div>}
-                </div>
-                <div className="line-fields">
-                  {field('quantity', 'Qty', 'numeric')}
-                  {field('unitPrice', 'Unit price €', 'decimal')}
-                  {field('discount', 'Discount €', 'decimal')}
-                  {field('taxRate', 'Tax %', 'decimal')}
-                  <div className="line-sum">
-                    <span>Line total</span>
-                    <strong>{preview.amounts ? formatEuro(preview.amounts.totalCents) : '—'}</strong>
-                  </div>
-                </div>
+                </div>}
                 <p className="line-math">
                   {preview.amounts
                     ? `${formatEuro(preview.amounts.subtotalCents)} subtotal − ${formatEuro(preview.amounts.discountCents)} discount = ${formatEuro(preview.amounts.taxableCents)} taxable + ${formatEuro(preview.amounts.taxCents)} tax`
@@ -1672,6 +1680,7 @@ function DocumentEditor({
         </section>
       </form>
     </main>
+    </>
   );
 }
 

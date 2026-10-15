@@ -855,6 +855,25 @@ button:active:not(:disabled) {
   display: block;
 }
 
+.document-notice {
+  padding: 0.8rem 1.5rem;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.document-notice a {
+  display: inline-block;
+  padding-block: 0.5rem;
+  margin-inline-start: 0.35rem;
+  color: inherit;
+  text-underline-offset: 0.16em;
+}
+
+.document-notice a:active {
+  color: var(--ink);
+}
+
 .editor-heading {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -924,12 +943,14 @@ button:active:not(:disabled) {
 
 .line-header {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 0.65rem;
 }
 
 .line-actions {
+  grid-column: 3;
+  grid-row: 1;
   display: flex;
   align-items: center;
   justify-content: end;
@@ -1141,6 +1162,10 @@ button:active:not(:disabled) {
     grid-template-columns: minmax(0, 1fr) auto;
   }
 
+  .line-actions {
+    grid-column: 2;
+  }
+
   .line-fields {
     grid-column: 1 / -1;
     grid-row: 2;
@@ -1341,6 +1366,7 @@ button:active:not(:disabled) {
   .back-link,
   button,
   .request-error,
+  .document-notice,
   .success-message {
     display: none !important;
   }

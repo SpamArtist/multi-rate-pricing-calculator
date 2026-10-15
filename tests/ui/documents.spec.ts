@@ -360,7 +360,7 @@ test('saves incomplete new document, repairs it, finalizes snapshot, and reloads
     await expect(page.getByRole('button', { name: 'Duplicate' })).toBeVisible();
     await page.getByRole('button', { name: 'Duplicate' }).click();
     await expect(page).toHaveURL(finalizedSourceUrl);
-    await expect(page.getByRole('status')).toHaveText('Draft duplicated.');
+    await expect(page.getByRole('status')).toContainText('Draft duplicated.');
     const copyLink = page.getByRole('link', { name: 'Open copy' });
     await expect(copyLink).toBeVisible();
     const copyHref = await copyLink.getAttribute('href');
@@ -430,9 +430,34 @@ test('duplicates a saved draft while source stays open and copy stays editable',
     await page.getByRole('button', { name: 'Duplicate' }).click();
     await expect(page).toHaveURL(sourceUrl);
     await expect(page.getByRole('heading', { name: 'Duplicate source' })).toBeVisible();
-    await expect(page.getByRole('status')).toHaveText('Draft duplicated.');
+    await expect(page.getByRole('status')).toContainText('Draft duplicated.');
     const openCopy = page.getByRole('link', { name: 'Open copy' });
     await expect(openCopy).toBeVisible();
+    await expect(page.getByRole('status').getByRole('link', { name: 'Open copy' })).toBeVisible();
+    for (const width of [1440, 390, 320]) {
+      await page.setViewportSize({ width, height: 978 });
+      const notice = await page.getByRole('status').boundingBox();
+      const topbar = await page.locator('.app-topbar').boundingBox();
+      const editor = await page.getByTestId('document-editor').boundingBox();
+      expect(notice!.y).toBeGreaterThanOrEqual(topbar!.y + topbar!.height);
+      expect(notice!.y + notice!.height).toBeLessThanOrEqual(editor!.y);
+      for (const line of [firstLine, secondLine]) {
+        const row = await line.boundingBox();
+        const remove = await line.getByRole('button', { name: /^Remove line/ }).boundingBox();
+        expect(Math.abs(remove!.x + remove!.width - row!.x - row!.width)).toBeLessThan(2);
+        if (width === 1440) {
+          const total = await line.locator('.line-sum').boundingBox();
+          expect(remove!.x).toBeGreaterThan(total!.x + total!.width);
+        }
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+      const screenshot = test.info().outputPath(`editor-feedback-${width}.png`);
+      await page.screenshot({ path: screenshot, fullPage: true });
+      await test.info().attach(`editor-feedback-${width}.png`, {
+        path: screenshot, contentType: 'image/png',
+      });
+    }
+    await page.setViewportSize({ width: 1280, height: 720 });
     const href = await openCopy.getAttribute('href');
     expect(href).toMatch(/^#\/documents\/[0-9a-f-]+$/i);
     const copyId = decodeURIComponent(href!.split('/').at(-1)!);
