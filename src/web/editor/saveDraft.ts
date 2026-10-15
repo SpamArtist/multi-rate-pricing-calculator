@@ -100,6 +100,11 @@ function attachServerIds(lines: LineValues[], pending: PendingDraftSave, documen
   });
 }
 
+function requestDefinitelyRejected(status: number): boolean {
+  // Timeout, retry, and server errors cannot prove that the write did not commit.
+  return status < 500 && status !== 408 && status !== 425 && status !== 429;
+}
+
 /** One committed aggregate save; pending request survives network loss and browser reload. */
 export async function saveEditorDraft(input: SaveDraftInput): Promise<SaveDraftOutcome> {
   const { ownerId, documentId, values, hasLineErrors, previewAmounts, finalizeAfterSave } = input;
@@ -128,7 +133,7 @@ export async function saveEditorDraft(input: SaveDraftInput): Promise<SaveDraftO
       if (!response.ok) {
         const error = await responseError(response);
         const submittedLines = pending.lineKeys.map(key => localLines.find(line => line.key === key) ?? { ...newLineValues(), key });
-        clearPendingDraftSave(ownerId, recoveryDocumentId);
+        if (requestDefinitelyRejected(response.status)) clearPendingDraftSave(ownerId, recoveryDocumentId);
         errors = response.status === 422
           ? { kind: 'finalization', ...splitFinalizationErrors(error.fields ?? {}, submittedLines) }
           : null;

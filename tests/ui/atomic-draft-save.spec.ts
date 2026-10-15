@@ -2,6 +2,101 @@ import { randomUUID } from 'node:crypto';
 import { expect, test } from '@playwright/test';
 import { migrationPool } from '../support/db-fixture.js';
 
+test('a pending save keeps every editor mutation locked until its snapshot is acknowledged', async ({ page }) => {
+  const email = `save-lock-${randomUUID()}@example.com`;
+  let releaseSave: (() => void) | undefined;
+  try {
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Create account' }).click();
+    await page.getByLabel('Email address').fill(email);
+    await page.getByLabel('Password').fill('A🔐b$cD');
+    await page.getByRole('button', { name: 'Create account' }).click();
+    await page.getByRole('button', { name: 'New document' }).click();
+    await page.getByLabel('Document name').fill('Snapshot title');
+    await page.getByRole('button', { name: 'Add line item' }).click();
+    await page.getByLabel('Line description').fill('Saved line');
+
+    let requestStarted!: () => void;
+    const started = new Promise<void>(resolve => { requestStarted = resolve; });
+    const released = new Promise<void>(resolve => { releaseSave = resolve; });
+    await page.route('**/documents/draft-save', async route => {
+      requestStarted();
+      await released;
+      await route.continue();
+    });
+    await page.getByRole('button', { name: 'Save as draft' }).click();
+    await started;
+
+    await expect(page.getByLabel('Document name')).toBeDisabled();
+    await expect(page.getByLabel('Customer name')).toBeDisabled();
+    await expect(page.getByLabel('Issue date')).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Add line item' })).toBeDisabled();
+    await expect(page.getByLabel('Line description')).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Remove line 1' })).toBeDisabled();
+    expect(await page.evaluate(() => Array.from({ length: sessionStorage.length }, (_, index) => sessionStorage.key(index))
+      .filter(key => key?.endsWith(':pending-save')))).toHaveLength(1);
+    releaseSave?.();
+    await expect(page).toHaveURL(/#\/documents\/[0-9a-f-]+$/i);
+    await expect(page.getByLabel('Document name')).toHaveValue('Snapshot title');
+    await expect(page.getByTestId('line-item')).toHaveCount(1);
+    await expect(page.getByRole('button', { name: 'Add line item' })).toBeEnabled();
+    const documentId = new URL(page.url()).hash.split('/').at(-1)!;
+    const detail = await (await page.context().request.get(new URL(`/documents/${documentId}`, page.url()).toString())).json() as {
+      title: string; lineItems: Array<{ description: string }>;
+    };
+    expect(detail.title).toBe('Snapshot title');
+    expect(detail.lineItems.map(line => line.description)).toEqual(['Saved line']);
+    const keys = await page.evaluate(() => Array.from({ length: sessionStorage.length }, (_, index) => sessionStorage.key(index)));
+    expect(keys.filter(key => key?.includes(':pending-save'))).toEqual([]);
+  } finally {
+    releaseSave?.();
+    await migrationPool.query('DELETE FROM users WHERE email_canonical = $1', [email.toLowerCase()]);
+  }
+});
+
+test('a committed creation followed by HTTP 502 replays the same mutation after reload', async ({ page }) => {
+  const email = `save-502-${randomUUID()}@example.com`;
+  try {
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Create account' }).click();
+    await page.getByLabel('Email address').fill(email);
+    await page.getByLabel('Password').fill('A🔐b$cD');
+    await page.getByRole('button', { name: 'Create account' }).click();
+    await page.getByRole('button', { name: 'New document' }).click();
+    await page.getByLabel('Document name').fill('Ambiguous gateway draft');
+
+    const requests: Array<{ mutationId: string }> = [];
+    let injected = false;
+    await page.route('**/documents/draft-save', async route => {
+      requests.push(route.request().postDataJSON() as { mutationId: string });
+      if (injected) return route.continue();
+      injected = true;
+      const committed = await route.fetch();
+      expect(committed.status()).toBe(201);
+      await route.fulfill({ status: 502, contentType: 'application/json', body: JSON.stringify({ error: { message: 'Gateway failed.' } }) });
+    });
+
+    await page.getByRole('button', { name: 'Save as draft' }).click();
+    await expect(page.getByRole('alert')).toContainText('Gateway failed.');
+    expect(await page.evaluate(() => Array.from({ length: sessionStorage.length }, (_, index) => sessionStorage.key(index))
+      .filter(key => key?.endsWith(':pending-save')))).toHaveLength(1);
+    await page.reload();
+    await expect(page.getByLabel('Document name')).toHaveValue('Ambiguous gateway draft');
+    await page.getByRole('button', { name: 'Save as draft' }).click();
+    await expect(page).toHaveURL(/#\/documents\/[0-9a-f-]+$/i);
+    expect(requests).toHaveLength(2);
+    expect(requests[1]).toEqual(requests[0]);
+    expect(await page.evaluate(() => Array.from({ length: sessionStorage.length }, (_, index) => sessionStorage.key(index))
+      .filter(key => key?.endsWith(':pending-save')))).toEqual([]);
+    const list = await (await page.context().request.get(new URL('/documents', page.url()).toString())).json() as {
+      items: Array<{ title: string }>;
+    };
+    expect(list.items.filter(item => item.title === 'Ambiguous gateway draft')).toHaveLength(1);
+  } finally {
+    await migrationPool.query('DELETE FROM users WHERE email_canonical = $1', [email.toLowerCase()]);
+  }
+});
+
 test('retry after a committed draft request loses its response does not insert a line twice', async ({ page }) => {
   const email = `atomic-save-${randomUUID()}@example.com`;
   try {

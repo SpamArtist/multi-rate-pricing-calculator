@@ -10,7 +10,7 @@ export function DocumentEditor(props: DocumentEditorProps): React.JSX.Element {
   const {
     document, values, lines, loading, loadError, message, duplicateCopyId, submitted, pending,
     linePreviews, titleError, dateError, customerError, lineItemsError, serverLineErrors,
-    canEdit, statusLabel, amounts, successMessage,
+    canEdit, canMutate, statusLabel, amounts, successMessage,
     changeField, changeLine, moveLine, removeLine, addLine, saveDraft, duplicateDocument, deleteDraft,
   } = useDocumentEditor(props);
 
@@ -77,7 +77,7 @@ export function DocumentEditor(props: DocumentEditorProps): React.JSX.Element {
                 name="title"
                 autoComplete="off"
                 value={values.title}
-                disabled={!canEdit}
+                disabled={!canMutate}
                 aria-invalid={Boolean(titleError)}
                 aria-describedby={titleError ? 'document-title-error' : undefined}
                 onChange={event => changeField('title', event.currentTarget.value)}
@@ -92,7 +92,7 @@ export function DocumentEditor(props: DocumentEditorProps): React.JSX.Element {
                 name="customerName"
                 autoComplete="off"
                 value={values.customerName}
-                disabled={!canEdit}
+                disabled={!canMutate}
                 aria-invalid={Boolean(customerError)}
                 aria-describedby={customerError ? 'customer-name-error' : undefined}
                 onChange={event => changeField('customerName', event.currentTarget.value)}
@@ -107,7 +107,7 @@ export function DocumentEditor(props: DocumentEditorProps): React.JSX.Element {
                 name="issueDate"
                 type="date"
                 value={values.issueDate}
-                disabled={!canEdit}
+                disabled={!canMutate}
                 aria-invalid={Boolean(dateError)}
                 aria-describedby={dateError ? 'issue-date-error' : undefined}
                 onChange={event => changeField('issueDate', event.currentTarget.value)}
@@ -134,14 +134,14 @@ export function DocumentEditor(props: DocumentEditorProps): React.JSX.Element {
               errors={serverLineErrors[line.key] ?? {}}
               submitted={submitted}
               canEdit={canEdit}
-              pending={pending}
+              canMutate={canMutate}
               lineCount={lines.length}
               onChange={changeLine}
               onMove={moveLine}
               onRemove={removeLine}
             />
           ))}
-          {canEdit && <button className="add-line" type="button" onClick={addLine}><PrototypeIcon name="plus" />Add line item</button>}
+          {canEdit && <button className="add-line" type="button" disabled={!canMutate} onClick={addLine}><PrototypeIcon name="plus" />Add line item</button>}
         </section>
 
         <section className="breakdown editor-section" aria-labelledby="arithmetic-heading">

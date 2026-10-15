@@ -10,14 +10,14 @@ type LineItemProps = {
   errors: Partial<Record<EditableLineField, string>>;
   submitted: boolean;
   canEdit: boolean;
-  pending: boolean;
+  canMutate: boolean;
   lineCount: number;
   onChange: (key: string, field: EditableLineField, value: string) => void;
   onMove: (key: string, direction: -1 | 1) => void;
   onRemove: (key: string) => void;
 };
 
-export function LineItem({ line, index, preview, errors, submitted, canEdit, pending, lineCount, onChange, onMove, onRemove }: LineItemProps): React.JSX.Element {
+export function LineItem({ line, index, preview, errors, submitted, canEdit, canMutate, lineCount, onChange, onMove, onRemove }: LineItemProps): React.JSX.Element {
   const field = (name: Exclude<EditableLineField, 'description'>, label: string, inputMode: 'numeric' | 'decimal'): React.JSX.Element => {
     const error = errors[name]
       ?? (submitted ? preview.errors[name] : undefined);
@@ -31,7 +31,7 @@ export function LineItem({ line, index, preview, errors, submitted, canEdit, pen
           inputMode={inputMode}
           autoComplete="off"
           value={line[name]}
-          disabled={!canEdit || pending}
+          disabled={!canMutate}
           aria-invalid={Boolean(error)}
           aria-describedby={error ? errorId : undefined}
           onChange={event => {
@@ -57,7 +57,7 @@ export function LineItem({ line, index, preview, errors, submitted, canEdit, pen
             id={`line-${line.key}-description`}
             placeholder="Item or service"
             value={line.description}
-            disabled={!canEdit || pending}
+            disabled={!canMutate}
             aria-invalid={Boolean(errors.description)}
             aria-describedby={errors.description ? `line-${line.key}-description-error` : undefined}
             onChange={event => onChange(line.key, 'description', event.currentTarget.value)}
@@ -81,21 +81,21 @@ export function LineItem({ line, index, preview, errors, submitted, canEdit, pen
             className="line-action"
             type="button"
             aria-label={`Move line ${index + 1} up`}
-            disabled={pending || index === 0}
+            disabled={!canMutate || index === 0}
             onClick={() => onMove(line.key, -1)}
           >↑</button>
           <button
             className="line-action"
             type="button"
             aria-label={`Move line ${index + 1} down`}
-            disabled={pending || index === lineCount - 1}
+            disabled={!canMutate || index === lineCount - 1}
             onClick={() => onMove(line.key, 1)}
           >↓</button>
           <button
             className="line-action remove-line"
             type="button"
             aria-label={`Remove line ${index + 1}`}
-            disabled={pending}
+            disabled={!canMutate}
             onClick={() => onRemove(line.key)}
           ><PrototypeIcon name="trash" /></button>
       </div>}

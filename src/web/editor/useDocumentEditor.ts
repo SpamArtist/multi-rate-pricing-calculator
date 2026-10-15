@@ -69,10 +69,11 @@ export function useDocumentEditor({ owner, documentId, onAuthExpired }: Document
   const customerError = serverErrors.customerName;
   const lineItemsError = serverErrors.lineItems;
   const canEdit = !document || document.status === 'draft';
+  const canMutate = canEdit && !pending;
   const statusLabel = !document ? 'Unsaved document' : document.status === 'draft' ? 'Editable draft' : 'Fixed snapshot';
 
   function changeField(field: keyof DocumentValues, value: string): void {
-    if (!values) return;
+    if (!canMutate || !values) return;
     const next = { ...values, [field]: value };
     setValues(next);
     storeEditorValues(owner.id, documentId, next);
@@ -86,6 +87,7 @@ export function useDocumentEditor({ owner, documentId, onAuthExpired }: Document
   }
 
   function changeLine(key: string, field: EditableLineField, value: string): void {
+    if (!canMutate) return;
     const next = lines.map(line => line.key === key ? { ...line, [field]: value } : line);
     setLines(next);
     storeEditorLines(owner.id, documentId, next);
@@ -99,6 +101,7 @@ export function useDocumentEditor({ owner, documentId, onAuthExpired }: Document
   }
 
   function moveLine(key: string, direction: -1 | 1): void {
+    if (!canMutate) return;
     const index = lines.findIndex(line => line.key === key);
     const target = index + direction;
     if (index < 0 || target < 0 || target >= lines.length) return;
@@ -110,6 +113,7 @@ export function useDocumentEditor({ owner, documentId, onAuthExpired }: Document
   }
 
   function removeLine(key: string): void {
+    if (!canMutate) return;
     const removed = lines.find(line => line.key === key);
     if (!removed) return;
     const next = lines.filter(line => line.key !== key);
@@ -125,6 +129,7 @@ export function useDocumentEditor({ owner, documentId, onAuthExpired }: Document
   }
 
   function addLine(): void {
+    if (!canMutate) return;
     const next = [...lines, newLineValues()];
     setLines(next);
     storeEditorLines(owner.id, documentId, next);
@@ -152,7 +157,7 @@ export function useDocumentEditor({ owner, documentId, onAuthExpired }: Document
   }
 
   async function saveDraft(finalizeAfterSave = false): Promise<void> {
-    if (!values) return;
+    if (!canMutate || !values) return;
     setSubmitted(true);
     setMessage('');
     clearEditorErrors(owner.id, documentId);
@@ -282,7 +287,7 @@ export function useDocumentEditor({ owner, documentId, onAuthExpired }: Document
   return {
     document, values, lines, loading, loadError, message, duplicateCopyId, submitted, pending,
     linePreviews, titleError, dateError, customerError, lineItemsError, serverLineErrors,
-    canEdit, statusLabel, amounts, successMessage,
+    canEdit, canMutate, statusLabel, amounts, successMessage,
     changeField, changeLine, moveLine, removeLine, addLine, saveDraft, duplicateDocument, deleteDraft,
   };
 }
