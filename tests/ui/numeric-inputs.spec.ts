@@ -51,3 +51,45 @@ test('numeric input restrictions preserve domain validation', async ({ page }) =
   await expect(page.getByText('Enter a EUR amount with up to two decimals.')).toHaveCount(2);
   await expect(page.getByText('Enter a tax rate from 0 to 100.00%.')).toBeVisible();
 });
+
+test('numeric fields enforce non-scientific number syntax for typing and paste', async ({ page }) => {
+  for (const label of ['Discount €', 'Unit price €', 'Tax %', 'Qty']) {
+    const input = page.getByLabel(label, { exact: true });
+    const initial = label === 'Qty' ? '12' : '0.00';
+    await input.fill(initial);
+    await input.press('End');
+    await input.press('.');
+    await expect(input).toHaveValue(initial);
+    await input.press('Space');
+    await expect(input).toHaveValue(initial);
+
+    for (const invalid of ['0.00.', '1..2', '1,2.3', '1,,2', '1 2', ' 12', '12 ', '1\t2', '1\u00a02', '1e3', '1E-3', '1+2', '1-2', '--2', '++2']) {
+      await input.selectText();
+      await page.keyboard.insertText(invalid);
+      await expect(input).toHaveValue(initial);
+    }
+    await input.selectText();
+    await page.keyboard.insertText('24');
+    await expect(input).toHaveValue('24');
+    await input.press('Backspace');
+    await expect(input).toHaveValue('2');
+  }
+
+  const quantity = page.getByLabel('Qty', { exact: true });
+  await quantity.fill('2.5');
+  await expect(quantity).toHaveValue('2');
+  await quantity.fill('2,5');
+  await expect(quantity).toHaveValue('2');
+
+  const discount = page.getByLabel('Discount €');
+  await discount.fill('12.50');
+  await discount.press('Home');
+  await discount.press('ArrowRight');
+  await discount.press('.');
+  await expect(discount).toHaveValue('12.50');
+  await discount.press('Home');
+  await discount.press('ArrowRight');
+  await discount.press('Shift+End');
+  await page.keyboard.insertText('3,25');
+  await expect(discount).toHaveValue('13,25');
+});

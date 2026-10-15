@@ -1593,8 +1593,10 @@ function DocumentEditor({
                     aria-describedby={error ? errorId : undefined}
                     onChange={event => {
                       const value = event.currentTarget.value;
-                      // Allow unfinished numeric edits; existing validation checks their final format and range.
-                      if (/^[\d.,+\s-]*$/.test(value)) changeLine(line.key, name, value);
+                      // Permit partial edits, but never whitespace, exponents, or repeated separators/signs.
+                      // Final validation still checks required values, precision, and range.
+                      const syntax = inputMode === 'numeric' ? /^[+-]?\d*$/ : /^[+-]?\d*(?:[.,]\d*)?$/;
+                      if (syntax.test(value)) changeLine(line.key, name, value);
                     }}
                   />
                   {error && <p className="field-error" id={errorId} role="alert">{error}</p>}
