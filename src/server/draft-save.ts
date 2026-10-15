@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto';
 import { and, asc, eq, sql } from 'drizzle-orm';
-import { json, type Request, type RequestHandler } from 'express';
+import { json } from 'express';
 import { documents, draftSaveMutations, lineItems } from '../db/schema.js';
-import { withTenantTransaction, type AuthenticatedOwnerId } from '../db/client.js';
+import { withTenantTransaction } from '../db/client.js';
 import { amountsWithinSafeRange, calculatePricing } from '../shared/pricing.js';
-import { authenticatedOwnerId } from './auth.js';
+import { requireAuthenticated, type AuthenticatedHandler } from './auth.js';
 import type { Clock } from './clock.js';
 import { serializeDocument } from './document-projection.js';
 import {
@@ -138,22 +138,10 @@ function requestHash(values: DraftSave): string {
   })).digest('hex');
 }
 
-export function draftSaveHandler(clock: Clock): RequestHandler[] {
-  return [async (request, response, next) => {
+export function draftSaveHandler(clock: Clock): AuthenticatedHandler[] {
+  return [requireAuthenticated(clock), json({ limit: '64kb' }), async (request, response, next) => {
     try {
-      const ownerId = await authenticatedOwnerId(request, clock);
-      if (!ownerId) {
-        response.status(401).json({ error: { code: 'unauthenticated', message: 'Sign in to continue.' } });
-        return;
-      }
-      (request as Request & { authenticatedOwnerId?: AuthenticatedOwnerId }).authenticatedOwnerId = ownerId;
-      next();
-    } catch (error) {
-      next(error);
-    }
-  }, json({ limit: '64kb' }), async (request, response, next) => {
-    try {
-      const ownerId = (request as Request & { authenticatedOwnerId?: AuthenticatedOwnerId }).authenticatedOwnerId!;
+      const ownerId = response.locals.ownerId;
       const parsed = parseDraftSave(request.body);
       if (!parsed.values) {
         response.status(422).json({ error: { code: 'validation_failed', message: 'Check the highlighted fields.', fields: parsed.fields } });

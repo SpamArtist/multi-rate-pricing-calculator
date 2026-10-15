@@ -1,8 +1,8 @@
 import { and, asc, count, desc, eq, gte, ilike, lte, sql } from 'drizzle-orm';
 import { json, Router, type Request, type RequestHandler } from 'express';
-import { authenticatedOwnerId } from './auth.js';
+import { requireAuthenticated, type AuthenticatedResponse } from './auth.js';
 import { documents, lineItems } from '../db/schema.js';
-import { withTenantTransaction, type AuthenticatedOwnerId, type TenantTransaction } from '../db/client.js';
+import { withTenantTransaction, type TenantTransaction } from '../db/client.js';
 import { isCalendarDate } from '../shared/document-validation.js';
 import {
   amountsWithinSafeRange,
@@ -23,10 +23,6 @@ type DocumentFields = {
   customerName: string;
   issueDate: string;
 };
-
-function requestOwnerId(request: Request): AuthenticatedOwnerId {
-  return (request as Request & { authenticatedOwnerId?: AuthenticatedOwnerId }).authenticatedOwnerId!;
-}
 
 const DOCUMENT_PAGE_SIZE = 25;
 const DOCUMENT_LIST_QUERY_FIELDS = ['search', 'status', 'issueDateStart', 'issueDateEnd', 'sort', 'page'] as const;
@@ -295,28 +291,12 @@ function sendLineMutationState(
   return false;
 }
 
-function sessionRequired(response: Parameters<RequestHandler>[1]): void {
-  response.status(401).json({ error: { code: 'unauthenticated', message: 'Sign in to continue.' } });
-}
-
 export function createDocumentsRouter(clock: Clock): Router {
   const router = Router();
 
-  router.use(async (request, response, next) => {
-    try {
-      const ownerId = await authenticatedOwnerId(request, clock);
-      if (!ownerId) {
-        sessionRequired(response);
-        return;
-      }
-      (request as Request & { authenticatedOwnerId?: AuthenticatedOwnerId }).authenticatedOwnerId = ownerId;
-      next();
-    } catch (error) {
-      next(error);
-    }
-  });
+  router.use(requireAuthenticated(clock));
 
-  router.get('/', async (request, response, next) => {
+  router.get('/', async (request, response: AuthenticatedResponse, next) => {
     const parsed = parseDocumentListQuery(request);
     if (!parsed.values) {
       sendValidation(response, parsed.fields);
@@ -324,7 +304,7 @@ export function createDocumentsRouter(clock: Clock): Router {
     }
     const query = parsed.values;
 
-    const ownerId = requestOwnerId(request);
+    const ownerId = response.locals.ownerId;
     const filters = [];
     if (query.search) {
       const escapedSearch = query.search.replace(/[\\%_]/g, '\\$&');
@@ -360,7 +340,7 @@ export function createDocumentsRouter(clock: Clock): Router {
     }
   });
 
-  router.post('/', json({ limit: '64kb' }), async (request, response, next) => {
+  router.post('/', json({ limit: '64kb' }), async (request, response: AuthenticatedResponse, next) => {
     const parsed = parseFields(request.body, ['title', 'issueDate', 'customerName'], ['title', 'issueDate']);
     if (!parsed.values || parsed.values.title === undefined || parsed.values.issueDate === undefined
       || Object.keys(parsed.fields).length > 0) {
@@ -368,7 +348,7 @@ export function createDocumentsRouter(clock: Clock): Router {
       return;
     }
 
-    const ownerId = requestOwnerId(request);
+    const ownerId = response.locals.ownerId;
     const values = parsed.values;
     try {
       const document = await withTenantTransaction(ownerId, async transaction => {
@@ -388,12 +368,12 @@ export function createDocumentsRouter(clock: Clock): Router {
     }
   });
 
-  router.get('/:id', async (request, response, next) => {
+  router.get('/:id', async (request, response: AuthenticatedResponse, next) => {
     if (!parseUuid(request.params.id)) {
       sendNotFound(response);
       return;
     }
-    const ownerId = requestOwnerId(request);
+    const ownerId = response.locals.ownerId;
     try {
       const document = await withTenantTransaction(ownerId, async transaction => {
         const [row] = await transaction.select().from(documents)
@@ -411,7 +391,7 @@ export function createDocumentsRouter(clock: Clock): Router {
     }
   });
 
-  router.patch('/:id', json({ limit: '64kb' }), async (request, response, next) => {
+  router.patch('/:id', json({ limit: '64kb' }), async (request, response: AuthenticatedResponse, next) => {
     const parsed = parseFields(request.body, ['title', 'customerName', 'issueDate']);
     if (!parsed.values || Object.keys(parsed.fields).length > 0) {
       sendValidation(response, parsed.fields);
@@ -422,7 +402,7 @@ export function createDocumentsRouter(clock: Clock): Router {
       return;
     }
 
-    const ownerId = requestOwnerId(request);
+    const ownerId = response.locals.ownerId;
     const values = parsed.values;
     try {
       const document = await withTenantTransaction(ownerId, async transaction => {
@@ -456,13 +436,13 @@ export function createDocumentsRouter(clock: Clock): Router {
     }
   });
 
-  router.delete('/:id', async (request, response, next) => {
+  router.delete('/:id', async (request, response: AuthenticatedResponse, next) => {
     if (!parseUuid(request.params.id)) {
       sendNotFound(response);
       return;
     }
 
-    const ownerId = requestOwnerId(request);
+    const ownerId = response.locals.ownerId;
     try {
       const result = await withTenantTransaction(ownerId, async transaction => {
         const [current] = await transaction.select({ id: documents.id, status: documents.status })
@@ -489,7 +469,7 @@ export function createDocumentsRouter(clock: Clock): Router {
     }
   });
 
-  router.post('/:id/duplicate', json({ limit: '64kb' }), async (request, response, next) => {
+  router.post('/:id/duplicate', json({ limit: '64kb' }), async (request, response: AuthenticatedResponse, next) => {
     const fields = Object.create(null) as Fields;
     const body = request.body === undefined ? {} : request.body;
     if (!isRecord(body)) {
@@ -512,7 +492,7 @@ export function createDocumentsRouter(clock: Clock): Router {
       return;
     }
 
-    const ownerId = requestOwnerId(request);
+    const ownerId = response.locals.ownerId;
     const issueDate = (body as { issueDate: string }).issueDate;
     try {
       const duplicate = await withTenantTransaction(ownerId, async transaction => {
@@ -522,25 +502,20 @@ export function createDocumentsRouter(clock: Clock): Router {
           .limit(1);
         if (!source) return undefined;
 
-        const sourceLines = await transaction.select().from(lineItems)
-          .where(eq(lineItems.documentId, source.id))
-          .orderBy(asc(lineItems.position), asc(lineItems.id));
         const inserted = await transaction.execute<{ id: string }>(sql`
           INSERT INTO documents (owner_id, title, customer_name, issue_date)
           VALUES (${ownerId}, ${source.title.trim()}, ${source.customerName.trim()}, ${issueDate})
           RETURNING id
         `);
         const copyId = inserted.rows[0].id;
-        for (const [index, line] of sourceLines.entries()) {
-          await transaction.execute(sql`
-            INSERT INTO line_items (
-              document_id, position, description, quantity, unit_price_cents, discount_cents, tax_rate_basis_points
-            ) VALUES (
-              ${copyId}, ${index + 1}, ${line.description}, ${line.quantity}, ${line.unitPriceCents},
-              ${line.discountCents}, ${line.taxRateBasisPoints}
-            )
-          `);
-        }
+        await transaction.execute(sql`
+          INSERT INTO line_items (
+            document_id, position, description, quantity, unit_price_cents, discount_cents, tax_rate_basis_points
+          )
+          SELECT ${copyId}, row_number() OVER (ORDER BY position, id), description, quantity,
+            unit_price_cents, discount_cents, tax_rate_basis_points
+          FROM line_items WHERE document_id = ${source.id}
+        `);
         const [copy] = await transaction.select().from(documents)
           .where(eq(documents.id, copyId))
           .limit(1);
@@ -556,7 +531,7 @@ export function createDocumentsRouter(clock: Clock): Router {
     }
   });
 
-  router.post('/:id/finalize', json({ limit: '64kb' }), async (request, response, next) => {
+  router.post('/:id/finalize', json({ limit: '64kb' }), async (request, response: AuthenticatedResponse, next) => {
     const fields = Object.create(null) as Fields;
     const declaredBodyLength = Number(request.get('content-length') ?? '0');
     const hasUndecodedBody = request.body === undefined
@@ -578,7 +553,7 @@ export function createDocumentsRouter(clock: Clock): Router {
       return;
     }
 
-    const ownerId = requestOwnerId(request);
+    const ownerId = response.locals.ownerId;
     try {
       const result = await withTenantTransaction(ownerId, async transaction => {
         const [current] = await transaction.select().from(documents)
@@ -670,7 +645,7 @@ export function createDocumentsRouter(clock: Clock): Router {
     }
   });
 
-  router.post('/:id/line-items', json({ limit: '64kb' }), async (request, response, next) => {
+  router.post('/:id/line-items', json({ limit: '64kb' }), async (request, response: AuthenticatedResponse, next) => {
     const parsed = parseLineFields(request.body, ['quantity', 'unitPriceCents']);
     if (!parsed.values || Object.keys(parsed.fields).length > 0) {
       sendValidation(response, parsed.fields);
@@ -688,7 +663,7 @@ export function createDocumentsRouter(clock: Clock): Router {
       return;
     }
 
-    const ownerId = requestOwnerId(request);
+    const ownerId = response.locals.ownerId;
     try {
       const result = await withTenantTransaction(ownerId, async transaction => {
         const locked = await lockDraftLines(transaction, request.params.id);
@@ -739,7 +714,7 @@ export function createDocumentsRouter(clock: Clock): Router {
     }
   });
 
-  router.patch('/:id/line-items/:lineItemId', json({ limit: '64kb' }), async (request, response, next) => {
+  router.patch('/:id/line-items/:lineItemId', json({ limit: '64kb' }), async (request, response: AuthenticatedResponse, next) => {
     const parsed = parseLineFields(request.body);
     if (!parsed.values || Object.keys(parsed.fields).length > 0) {
       sendValidation(response, parsed.fields);
@@ -751,7 +726,7 @@ export function createDocumentsRouter(clock: Clock): Router {
       return;
     }
 
-    const ownerId = requestOwnerId(request);
+    const ownerId = response.locals.ownerId;
     try {
       const result = await withTenantTransaction(ownerId, async transaction => {
         const locked = await lockDraftLines(transaction, request.params.id);
@@ -812,14 +787,14 @@ export function createDocumentsRouter(clock: Clock): Router {
     }
   });
 
-  router.delete('/:id/line-items/:lineItemId', async (request, response, next) => {
+  router.delete('/:id/line-items/:lineItemId', async (request, response: AuthenticatedResponse, next) => {
     const lineItemId = parseUuid(request.params.lineItemId);
     if (!parseUuid(request.params.id) || !lineItemId) {
       sendNotFound(response);
       return;
     }
 
-    const ownerId = requestOwnerId(request);
+    const ownerId = response.locals.ownerId;
     try {
       const result = await withTenantTransaction(ownerId, async transaction => {
         const locked = await lockDraftLines(transaction, request.params.id);

@@ -164,9 +164,26 @@ async function resolveSession(request: Request, clock: Clock): Promise<Authentic
   return { id: user.id as AuthenticatedOwnerId, email: user.email };
 }
 
-/** Refresh a cookie session and return its trusted owner identity for tenant routes. */
-export async function authenticatedOwnerId(request: Request, clock: Clock): Promise<AuthenticatedOwnerId | undefined> {
-  return (await resolveSession(request, clock))?.id;
+export type AuthenticatedHandler = RequestHandler<
+  Request['params'], unknown, unknown, Request['query'], { ownerId: AuthenticatedOwnerId }
+>;
+export type AuthenticatedResponse = Parameters<AuthenticatedHandler>[1];
+
+/** Refresh the cookie session before parsing tenant requests, then bind its trusted owner. */
+export function requireAuthenticated(clock: Clock): AuthenticatedHandler {
+  return async (request, response, next) => {
+    try {
+      const user = await resolveSession(request, clock);
+      if (!user) {
+        unauthenticated(response);
+        return;
+      }
+      response.locals.ownerId = user.id;
+      next();
+    } catch (error) {
+      next(error);
+    }
+  };
 }
 
 function isEmailUniqueConflict(error: unknown): boolean {

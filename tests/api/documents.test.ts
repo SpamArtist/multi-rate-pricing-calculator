@@ -96,6 +96,24 @@ describe('document drafts', () => {
     await Promise.all([migrationPool.end(), closeDatabase()]);
   });
 
+  it.each(['/documents', '/documents/draft-save'])('authenticates before parsing JSON at %s', async path => {
+    const request = {
+      method: 'POST',
+      headers: { origin: baseUrl, 'content-type': 'application/json' },
+      body: '{',
+    };
+    const unauthenticated = await fetch(`${baseUrl}${path}`, request);
+    expect(unauthenticated.status).toBe(401);
+    expect(await unauthenticated.json()).toEqual({
+      error: { code: 'unauthenticated', message: 'Sign in to continue.' },
+    });
+
+    const { client } = await signedInClient(`parse-order-${path.replaceAll('/', '-')}@example.com`);
+    const authenticated = await client.fetch(`${baseUrl}${path}`, request);
+    expect(authenticated.status).toBe(422);
+    expect(await authenticated.json()).toMatchObject({ error: { code: 'validation_failed' } });
+  });
+
   it('requires title and real issue date, rejects client-controlled fields, and saves an empty draft', async () => {
     const { client } = await signedInClient('documents-create@example.com');
 

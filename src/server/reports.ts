@@ -1,18 +1,14 @@
 import { and, eq, gte, lte, sql } from 'drizzle-orm';
 import { Router, type Request, type RequestHandler } from 'express';
-import { withTenantTransaction, type AuthenticatedOwnerId } from '../db/client.js';
+import { withTenantTransaction } from '../db/client.js';
 import { documents } from '../db/schema.js';
 import { isCalendarDate } from '../shared/document-validation.js';
 import { MAX_SAFE_AMOUNT } from '../shared/pricing.js';
-import { authenticatedOwnerId } from './auth.js';
+import { requireAuthenticated, type AuthenticatedResponse } from './auth.js';
 import { type Clock } from './clock.js';
 
 type Fields = Record<string, string>;
 type SummaryQuery = { start: string; end: string };
-
-function requestOwnerId(request: Request): AuthenticatedOwnerId {
-  return (request as Request & { authenticatedOwnerId?: AuthenticatedOwnerId }).authenticatedOwnerId!;
-}
 
 function parseSummaryQuery(request: Request): { fields: Fields; values?: SummaryQuery } {
   const fields = Object.create(null) as Fields;
@@ -52,29 +48,15 @@ function validationError(response: Parameters<RequestHandler>[1], fields: Fields
   });
 }
 
-function sessionRequired(response: Parameters<RequestHandler>[1]): void {
-  response.status(401).json({ error: { code: 'unauthenticated', message: 'Sign in to continue.' } });
-}
-
 export function createReportsRouter(clock: Clock): Router {
   const router = Router();
 
-  router.use(async (request, response, next) => {
-    try {
-      const ownerId = await authenticatedOwnerId(request, clock);
-      if (!ownerId) {
-        sessionRequired(response);
-        return;
-      }
-      response.setHeader('Cache-Control', 'private, no-store');
-      (request as Request & { authenticatedOwnerId?: AuthenticatedOwnerId }).authenticatedOwnerId = ownerId;
-      next();
-    } catch (error) {
-      next(error);
-    }
+  router.use(requireAuthenticated(clock), (_request, response, next) => {
+    response.setHeader('Cache-Control', 'private, no-store');
+    next();
   });
 
-  router.get('/summary', async (request, response, next) => {
+  router.get('/summary', async (request, response: AuthenticatedResponse, next) => {
     const parsed = parseSummaryQuery(request);
     if (!parsed.values) {
       validationError(response, parsed.fields);
@@ -82,7 +64,7 @@ export function createReportsRouter(clock: Clock): Router {
     }
 
     const { start, end } = parsed.values;
-    const ownerId = requestOwnerId(request);
+    const ownerId = response.locals.ownerId;
     try {
       const aggregate = await withTenantTransaction(ownerId, async transaction => {
         const [row] = await transaction.select({

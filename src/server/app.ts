@@ -23,7 +23,7 @@ export function createApp(
 
   app.use(requireSameOriginForCookieMutations);
   app.use('/auth', createAuthRouter(clock, options.signupRateLimit, options.signinRateLimit));
-  app.post('/documents/draft-save', draftSaveHandler(clock));
+  app.post('/documents/draft-save', ...draftSaveHandler(clock));
   app.use('/documents', createDocumentsRouter(clock));
   app.use('/reports', createReportsRouter(clock));
 
