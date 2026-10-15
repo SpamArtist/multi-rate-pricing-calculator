@@ -158,8 +158,16 @@ export function clearUserEditorValues(ownerId: string): void {
   }
 }
 
-/** Restore the editable browser copy while retaining authoritative line amounts. */
+/** Restore draft edits; finalized snapshots always use authoritative content. */
 export function restoreEditor(ownerId: string, documentId: string, document: DocumentData) {
+  if (document.status === 'finalized') {
+    clearEditorValues(ownerId, documentId);
+    return {
+      values: { title: document.title, customerName: document.customerName, issueDate: document.issueDate },
+      lines: lineValuesFromDocument(document),
+      errors: null,
+    };
+  }
   const values = readEditorValues(ownerId, documentId) ?? {
     title: document.title,
     customerName: document.customerName,
