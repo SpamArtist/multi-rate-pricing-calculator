@@ -252,6 +252,8 @@ test('finalized reload ignores stale local edits and prints the server snapshot'
     }), recoveryKeys)).toEqual({ documentKeys: [], otherPending: 'other document recovery' });
 
     await page.emulateMedia({ media: 'print' });
+    await expect(page.locator('.metadata-fields .print-value').first()).toBeVisible();
+    await expect(page.locator('.line-description .print-value').first()).toBeVisible();
     await expect(page.locator('.metadata-fields .print-value')).toHaveText([
       snapshot.title, snapshot.customerName, '14 Oct 2026',
     ]);
