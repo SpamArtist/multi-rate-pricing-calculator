@@ -192,6 +192,7 @@ test('new draft replay finds committed document after reload and applies later e
     await page.getByRole('button', { name: 'Save as draft' }).click();
     await expect(page).toHaveURL(/#\/documents\/[0-9a-f-]+$/i);
     await expect(page.getByRole('heading', { name: 'Lost response draft' })).toBeVisible();
+    await expect(page.getByRole('status')).toHaveText('Draft saved.');
 
     const listResponse = await page.context().request.get(new URL('/documents', page.url()).toString());
     const list = await listResponse.json() as { items: Array<{ id: string; title: string }> };
@@ -301,6 +302,7 @@ test('lost finalization response keeps a new document at its created ID', async 
     });
     await page.getByRole('button', { name: 'Finalize document' }).click();
     await expect(page).toHaveURL(/#\/documents\/[0-9a-f-]+$/i);
+    await expect(page.getByText('Fixed snapshot', { exact: true })).toBeVisible();
     expect(aborted).toBe(true);
     await page.reload();
     await expect(page.getByText('Fixed snapshot', { exact: true })).toBeVisible();

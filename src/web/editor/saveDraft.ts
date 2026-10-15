@@ -21,10 +21,9 @@ import {
 
 export type SaveErrors = ReturnType<typeof splitFinalizationErrors>;
 export type SaveDraftOutcome = {
-  kind: 'saved' | 'failed' | 'uncertain' | 'auth-expired';
+  kind: 'saved' | 'failed' | 'uncertain' | 'auth-expired' | 'cancelled';
   errors: SaveErrors | null;
   message: string;
-  documentId: string | null;
 };
 
 export type SaveCheckpoint = {
@@ -104,11 +103,17 @@ function requestDefinitelyRejected(status: number): boolean {
   return status < 500 && status !== 408 && status !== 425 && status !== 429;
 }
 
-/** Own live mutation identity; browser storage only adds recovery across reloads. */
-export function createDraftSaver(ownerId: string, documentId?: string) {
+class EditorSessionEnded extends Error {}
+
+/** Own mutation identity only while this editor session owns its recovery. */
+export function createDraftSaver(ownerId: string, documentId: string | undefined, isActive: () => boolean) {
   const recovered = readPendingDraftSave(ownerId, documentId);
   let phase: SavePhase = recovered ? { kind: 'saving', request: recovered } : { kind: 'ready' };
   let recoveryDocumentId = documentId;
+
+  function requireActiveSession(): void {
+    if (!isActive()) throw new EditorSessionEnded();
+  }
 
   return async function saveEditorDraft(
     input: SaveDraftInput,
@@ -120,14 +125,12 @@ export function createDraftSaver(ownerId: string, documentId?: string) {
     let authoritative = input.document;
 
     function outcome(kind: SaveDraftOutcome['kind'], message = '', errors: SaveErrors | null = null): SaveDraftOutcome {
-      return {
-        kind, message, errors,
-        documentId: recoveryDocumentId ?? null,
-      };
+      return { kind, message, errors };
     }
 
     // Every acknowledgement updates the live editor and recovery before any later request.
     function checkpoint(document: DocumentData, nextValues: DocumentValues, nextLines: LineValues[]): void {
+      requireActiveSession();
       storeEditorValues(ownerId, document.id, nextValues);
       storeEditorLines(ownerId, document.id, nextLines);
       clearPendingDraftSave(ownerId, recoveryDocumentId);
@@ -152,6 +155,7 @@ export function createDraftSaver(ownerId: string, documentId?: string) {
     async function reconcile(document: DocumentData): Promise<SaveDraftOutcome | null> {
       try {
         const response = await fetch(`/documents/${encodeURIComponent(document.id)}`);
+        requireActiveSession();
         if (response.status === 401) return outcome('auth-expired');
         if (response.ok) {
           const current = await response.json() as DocumentData;
@@ -161,20 +165,22 @@ export function createDraftSaver(ownerId: string, documentId?: string) {
           return null;
         }
       } catch {
+        if (!isActive()) return outcome('cancelled');
         // Keep the finalizing phase so the next attempt reads before it writes.
       }
       return outcome('uncertain', 'Could not confirm finalization. Check your connection and try again to check document status.');
     }
 
-    if (phase.kind === 'finalizing') {
-      const result = await reconcile(phase.document);
-      if (result) return result;
-    }
-
     try {
+      requireActiveSession();
+      if (phase.kind === 'finalizing') {
+        const result = await reconcile(phase.document);
+        if (result) return result;
+      }
       let savedLineKeys: string[] = [];
       // Replay an outstanding request first, then save later edits with its acknowledged IDs.
       while (true) {
+        requireActiveSession();
         const request: PendingDraftSave = phase.kind === 'saving' ? phase.request : {
           ...draftBody(authoritative?.id ?? recoveryDocumentId, values, localLines, authoritative),
           signature: currentSignature,
@@ -184,9 +190,11 @@ export function createDraftSaver(ownerId: string, documentId?: string) {
         const response = await fetch('/documents/draft-save', {
           method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(request.body),
         });
+        requireActiveSession();
         if (response.status === 401) return outcome('auth-expired');
         if (!response.ok) {
           const error = await responseError(response);
+          requireActiveSession();
           if (requestDefinitelyRejected(response.status)) {
             phase = { kind: 'ready' };
             clearPendingDraftSave(ownerId, recoveryDocumentId);
@@ -218,12 +226,14 @@ export function createDraftSaver(ownerId: string, documentId?: string) {
       const response = await fetch(`/documents/${encodeURIComponent(saved.id)}/finalize`, {
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({}),
       });
+      requireActiveSession();
       if (response.ok) return complete(await response.json() as DocumentData);
       if (response.status === 401) {
         phase = { kind: 'ready' };
         return outcome('auth-expired');
       }
       const error = await responseError(response);
+      requireActiveSession();
       if (response.status === 422) {
         phase = { kind: 'ready' };
         const savedLines = savedLineKeys.map(key => localLines.find(line => line.key === key) ?? { ...newLineValues(), key });
@@ -234,6 +244,7 @@ export function createDraftSaver(ownerId: string, documentId?: string) {
       return await reconcile(saved)
         ?? outcome('failed', error.message ?? 'Could not finalize this document. Your draft stays editable.');
     } catch {
+      if (!isActive()) return outcome('cancelled');
       if (phase.kind === 'finalizing') {
         return await reconcile(phase.document)
           ?? outcome('failed', 'Finalization was not confirmed. Your draft stays editable. Try again.');

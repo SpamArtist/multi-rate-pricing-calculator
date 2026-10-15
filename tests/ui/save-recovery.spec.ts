@@ -126,6 +126,7 @@ test('storage denial does not change the mutation ID when creation is retried', 
   await page.getByLabel('Customer name').fill('Edited after failure');
   await page.getByRole('button', { name: 'Save as draft' }).click();
   await expect(page).toHaveURL(/#\/documents\/[0-9a-f-]+$/i);
+  await expect(page.getByRole('status')).toHaveText('Draft saved.');
   const list = await (await page.context().request.get(new URL('/documents', page.url()).toString())).json() as {
     items: Array<{ id: string; customerName: string }>;
   };

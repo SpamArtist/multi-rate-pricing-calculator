@@ -31,8 +31,8 @@ export function useDocumentEditor({ owner, documentId: routeDocumentId, onAuthEx
   const [submitted, setSubmitted] = React.useState(false);
   const [pending, setPending] = React.useState(false);
   const [uncertainFinalization, setUncertainFinalization] = React.useState(false);
-  const [saveEditorDraft] = React.useState(() => createDraftSaver(owner.id, initialDocumentId));
   const active = React.useRef(false);
+  const [saveEditorDraft] = React.useState(() => createDraftSaver(owner.id, initialDocumentId, () => active.current));
 
   React.useEffect(() => {
     active.current = true;
@@ -176,6 +176,7 @@ export function useDocumentEditor({ owner, documentId: routeDocumentId, onAuthEx
         setDocument(checkpoint.document);
         setValues(checkpoint.values);
         setLines(checkpoint.lines);
+        replaceRoute(`/documents/${encodeURIComponent(checkpoint.document.id)}`);
       });
       if (!active.current) return;
       setServerErrors(outcome.errors?.document ?? {});
@@ -183,7 +184,6 @@ export function useDocumentEditor({ owner, documentId: routeDocumentId, onAuthEx
       setSubmitted(outcome.kind !== 'saved');
       setUncertainFinalization(outcome.kind === 'uncertain');
       setMessage(outcome.message);
-      if (outcome.documentId) replaceRoute(`/documents/${encodeURIComponent(outcome.documentId)}`);
       if (outcome.kind === 'auth-expired') onAuthExpired();
     } finally {
       setPending(false);
