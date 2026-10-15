@@ -372,7 +372,7 @@ export function createDocumentsRouter(clock: Clock): Router {
           totalItems: countResult?.totalItems ?? 0,
           totalPages: Math.ceil((countResult?.totalItems ?? 0) / DOCUMENT_PAGE_SIZE),
         };
-      });
+      }, { consistentRead: true });
       response.status(200).json(result);
     } catch (error) {
       next(error);
@@ -418,7 +418,7 @@ export function createDocumentsRouter(clock: Clock): Router {
           .where(eq(documents.id, request.params.id))
           .limit(1);
         return row ? serializeDocument(transaction, row) : undefined;
-      });
+      }, { consistentRead: true });
       if (!document) {
         sendNotFound(response);
         return;
