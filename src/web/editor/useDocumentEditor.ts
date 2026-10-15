@@ -3,9 +3,9 @@ import type { DocumentData, FieldErrors, User } from '../api/contracts.js';
 import { responseError } from '../api/client.js';
 import { localToday } from '../formatting.js';
 import { navigate } from '../routing.js';
-import { documentFieldErrors, lineValuesFromDocument, newLineValues, previewLine, previewDocumentAmounts, type DocumentValues, type EditableLineField, type LineValues } from './model.js';
+import { documentFieldErrors, newLineValues, previewLine, previewDocumentAmounts, type DocumentValues, type EditableLineField, type LineValues } from './model.js';
 import { clearEditorErrors, clearEditorValues, readEditorLines, readEditorValues, restoreEditor, storeEditorLines, storeEditorValues } from './storage.js';
-import { saveEditorDraft, type SaveErrors } from './saveDraft.js';
+import { createDraftSaver } from './saveDraft.js';
 
 export type DocumentEditorProps = {
   owner: User;
@@ -27,6 +27,8 @@ export function useDocumentEditor({ owner, documentId, onAuthExpired }: Document
   const [duplicateCopyId, setDuplicateCopyId] = React.useState<string | null>(null);
   const [submitted, setSubmitted] = React.useState(false);
   const [pending, setPending] = React.useState(false);
+  const [uncertainFinalization, setUncertainFinalization] = React.useState(false);
+  const [saveEditorDraft] = React.useState(() => createDraftSaver(owner.id, documentId));
 
   React.useEffect(() => {
     if (!documentId) return;
@@ -69,7 +71,7 @@ export function useDocumentEditor({ owner, documentId, onAuthExpired }: Document
   const customerError = serverErrors.customerName;
   const lineItemsError = serverErrors.lineItems;
   const canEdit = !document || document.status === 'draft';
-  const canMutate = canEdit && !pending;
+  const canMutate = canEdit && !pending && !uncertainFinalization;
   const statusLabel = !document ? 'Unsaved document' : document.status === 'draft' ? 'Editable draft' : 'Fixed snapshot';
 
   function changeField(field: keyof DocumentValues, value: string): void {
@@ -143,77 +145,36 @@ export function useDocumentEditor({ owner, documentId, onAuthExpired }: Document
     setMessage('');
   }
 
-  function applySaveErrors(errors: SaveErrors | null): void {
-    if (!errors) return;
-    switch (errors.kind) {
-      case 'document':
-        setServerErrors(errors.fields);
-        break;
-      case 'finalization':
-        setServerErrors(errors.document);
-        setServerLineErrors(errors.lines);
-        break;
-    }
-  }
-
   async function saveDraft(finalizeAfterSave = false): Promise<void> {
-    if (!canMutate || !values) return;
+    if (!canEdit || pending || !values) return;
     setSubmitted(true);
     setMessage('');
     clearEditorErrors(owner.id, documentId);
     setServerErrors({});
     setServerLineErrors({});
-    if (Object.keys(documentFieldErrors(values)).length > 0) return;
-    if ((hasLineErrors || !previewAmounts) && !finalizeAfterSave) {
-      setMessage(hasLineErrors ? 'Check line item fields before saving.' : 'Document amounts exceed the supported safe integer range.');
-      return;
+    if (!uncertainFinalization) {
+      if (Object.keys(documentFieldErrors(values)).length > 0) return;
+      if ((hasLineErrors || !previewAmounts) && !finalizeAfterSave) {
+        setMessage(hasLineErrors ? 'Check line item fields before saving.' : 'Document amounts exceed the supported safe integer range.');
+        return;
+      }
     }
     setPending(true);
     try {
       const outcome = await saveEditorDraft({
-        ownerId: owner.id, documentId, document, values, lines,
-        hasLineErrors, previewAmounts, finalizeAfterSave,
+        document, values, lines, hasLineErrors, previewAmounts, finalizeAfterSave,
+      }, checkpoint => {
+        setDocument(checkpoint.document);
+        setValues(checkpoint.values);
+        setLines(checkpoint.lines);
       });
-      switch (outcome.kind) {
-        case 'auth-expired':
-          applySaveErrors(outcome.errors);
-          if (outcome.navigateTo) navigate(outcome.navigateTo);
-          onAuthExpired();
-          return;
-        case 'failed':
-          applySaveErrors(outcome.errors);
-          break;
-        case 'saved':
-          setDocument(outcome.document);
-          setValues({ title: outcome.document.title, customerName: outcome.document.customerName, issueDate: outcome.document.issueDate });
-          setLines(lineValuesFromDocument(outcome.document));
-          setServerLineErrors({});
-          setSubmitted(false);
-          setServerErrors({});
-          break;
-        case 'incomplete-draft':
-          setDocument(outcome.document);
-          setValues({ title: outcome.document.title, customerName: outcome.document.customerName, issueDate: outcome.document.issueDate });
-          setLines(outcome.lines);
-          setServerLineErrors({});
-          setSubmitted(true);
-          break;
-        case 'finalize-rejected':
-          if (outcome.errors) {
-            setServerErrors(outcome.errors.document);
-            setServerLineErrors(outcome.errors.lines);
-          }
-          if (outcome.refreshed) {
-            const { document, lines } = outcome.refreshed;
-            setDocument(document);
-            setValues({ title: document.title, customerName: document.customerName, issueDate: document.issueDate });
-            setLines(lines);
-          }
-          setSubmitted(true);
-          break;
-      }
+      setServerErrors(outcome.errors?.document ?? {});
+      setServerLineErrors(outcome.errors?.lines ?? {});
+      setSubmitted(outcome.kind !== 'saved');
+      setUncertainFinalization(outcome.kind === 'uncertain');
       setMessage(outcome.message);
       if (outcome.navigateTo) navigate(outcome.navigateTo);
+      if (outcome.kind === 'auth-expired') onAuthExpired();
     } finally {
       setPending(false);
     }
@@ -250,7 +211,7 @@ export function useDocumentEditor({ owner, documentId, onAuthExpired }: Document
   }
 
   async function deleteDraft(): Promise<void> {
-    if (!documentId || !document || document.status !== 'draft' || pending) return;
+    if (!documentId || !document || !canMutate) return;
     if (!window.confirm('Delete this draft and all its lines permanently?')) return;
 
     setPending(true);

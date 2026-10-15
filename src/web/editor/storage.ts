@@ -30,7 +30,7 @@ export function storePendingDraftSave(ownerId: string, documentId: string | unde
   try {
     window.sessionStorage.setItem(pendingSaveKey(ownerId, documentId), JSON.stringify(pending));
   } catch {
-    // Live form state remains available when browser storage is unavailable.
+    // The live saver retains mutation identity when browser storage is unavailable.
   }
 }
 

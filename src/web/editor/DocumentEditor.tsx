@@ -54,7 +54,7 @@ export function DocumentEditor(props: DocumentEditorProps): React.JSX.Element {
             {document?.status === 'draft' && <button
               className="secondary-button danger-button"
               type="button"
-              disabled={pending}
+              disabled={!canMutate}
               onClick={() => void deleteDraft()}
             >{pending ? 'Deleting…' : 'Delete draft'}</button>}
             <button className="secondary-button print-button" type="button" onClick={() => window.print()}><PrototypeIcon name="print" />Print</button>

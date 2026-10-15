@@ -36,6 +36,7 @@ export type DocumentData = DocumentSummary & {
   }>;
 };
 export type FieldErrors = Record<string, string>;
+export type ApiError = { code?: string; message?: string; fields?: FieldErrors };
 
 export type DraftSaveBody = {
   mutationId: string;
