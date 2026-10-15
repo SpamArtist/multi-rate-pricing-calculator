@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { closeDatabase } from '../../src/db/client.js';
 import { createApp } from '../../src/server/app.js';
 import { createApiSession } from '../support/api-session.js';
-import { deleteTestOwner, migrationPool } from '../support/db-fixture.js';
+import { deleteTestOwner, migrationPool, testPool, withOwner } from '../support/db-fixture.js';
 import { TestClock } from '../support/test-clock.js';
 
 const clock = new TestClock('2026-10-14T08:00:00.000Z');
@@ -56,7 +56,7 @@ describe('draft line mutations', () => {
   afterAll(async () => {
     await close();
     for (const ownerId of createdOwnerIds) await deleteTestOwner(ownerId);
-    await Promise.all([migrationPool.end(), closeDatabase()]);
+    await Promise.all([migrationPool.end(), testPool.end(), closeDatabase()]);
   });
 
   it('inserts at each position, partially edits, moves both ways, deletes, and keeps ordered IDs stable', async () => {
@@ -204,6 +204,37 @@ describe('draft line mutations', () => {
         expect.objectContaining({ id: zeroLine.id, description: 'Zero', unitPriceCents: 0 })],
       amounts: { subtotalCents: Number.MAX_SAFE_INTEGER, totalCents: Number.MAX_SAFE_INTEGER },
     });
+  });
+
+  it('mutates accumulated drafts beyond the per-row parameter limit', async () => {
+    const { client, ownerId } = await signedInClient('line-mutations-large@example.com');
+    const created = await client.fetch(`${baseUrl}/documents`, jsonRequest('POST', {
+      title: 'Accumulated draft', issueDate: '2026-10-14',
+    }));
+    const document = await created.json() as Detail;
+    const size = 9_363; // Seven parameters per retained line would exceed PostgreSQL's 65,535 limit.
+    await withOwner(ownerId, connection => connection.query(
+      `INSERT INTO line_items (document_id, position, description, quantity, unit_price_cents)
+       SELECT $1, position, 'Accumulated line', 1, 100 FROM generate_series(1, $2::integer) AS position`,
+      [document.id, size],
+    ));
+    const route = `${baseUrl}/documents/${document.id}/line-items`;
+    const inserted = await client.fetch(route, jsonRequest('POST', {
+      description: 'New line', quantity: 2, unitPriceCents: 150, position: 1,
+    }));
+    expect(inserted.status).toBe(201);
+    const line = await inserted.json() as Line;
+    const moved = await client.fetch(`${route}/${line.id}`, jsonRequest('PATCH', {
+      position: size + 1, unitPriceCents: 200,
+    }));
+    expect(moved.status).toBe(200);
+    expect(await moved.json()).toMatchObject({ id: line.id, position: size + 1, unitPriceCents: 200 });
+    const deleted = await client.fetch(`${route}/${line.id}`, jsonRequest('DELETE'));
+    expect(deleted.status).toBe(204);
+    const detail = await client.fetch(`${baseUrl}/documents/${document.id}`);
+    const saved = await detail.json() as Detail;
+    expect(saved.lineItems.map(item => item.position)).toEqual(Array.from({ length: size }, (_, index) => index + 1));
+    expect(saved.amounts.totalCents).toBe(size * 100);
   });
 
   it('accepts uppercase UUID route IDs for a saved line', async () => {

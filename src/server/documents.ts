@@ -12,7 +12,7 @@ import {
 } from '../shared/pricing.js';
 import { databaseLineInput, projectDocumentSummaries, serializeDocument, serializeLineItem } from './document-projection.js';
 import { type Clock } from './clock.js';
-import { writeLineSnapshots } from './line-set-persistence.js';
+import { replaceDraftLines, writeLineSnapshots, type DraftLineInput } from './line-set-persistence.js';
 import {
   fields as createFields, inputError, isRecord, linePricingErrors, MAX_DATABASE_INTEGER,
   parseAmount, parseCustomerName, parseDescription, parseIssueDate, parsePosition, parseQuantity,
@@ -129,7 +129,7 @@ type CompleteLineInput = LinePricingInput & { description: string };
 type DraftLineMutation =
   | { kind: 'missing' }
   | { kind: 'finalized' }
-  | { kind: 'draft'; documentId: string; lines: (typeof lineItems.$inferSelect)[] };
+  | { kind: 'draft'; documentId: string; lines: (DraftLineInput & { id: string })[] };
 
 function parseFields(body: unknown, allowed: readonly string[], required: readonly string[] = []): { fields: Fields; values?: Partial<DocumentFields> } {
   const fields = createFields();
@@ -250,31 +250,10 @@ async function lockDraftLines(transaction: TenantTransaction, documentId: string
   const lines = await transaction.select().from(lineItems)
     .where(eq(lineItems.documentId, parent.id))
     .orderBy(asc(lineItems.position), asc(lineItems.id));
-  return { kind: 'draft', documentId: parent.id, lines };
-}
-
-async function moveLinePosition(
-  transaction: TenantTransaction,
-  documentId: string,
-  line: typeof lineItems.$inferSelect,
-  newPosition: number,
-): Promise<void> {
-  if (line.position === newPosition) return;
-  await transaction.execute(sql`SET CONSTRAINTS line_items_document_position_unique DEFERRED`);
-  await transaction.execute(sql`
-    UPDATE line_items
-    SET position = CASE
-      WHEN id = ${line.id} THEN ${newPosition}
-      WHEN ${line.position} < ${newPosition} THEN position - 1
-      ELSE position + 1
-    END
-    WHERE document_id = ${documentId}
-      AND (
-        id = ${line.id}
-        OR (${line.position} < ${newPosition} AND position > ${line.position} AND position <= ${newPosition})
-        OR (${line.position} > ${newPosition} AND position >= ${newPosition} AND position < ${line.position})
-      )
-  `);
+  return {
+    kind: 'draft', documentId: parent.id,
+    lines: lines.map(line => ({ id: line.id, ...databaseLineInput(line) })),
+  };
 }
 
 function sendLineMutationState(
@@ -672,26 +651,16 @@ export function createDocumentsRouter(clock: Clock): Router {
           return { kind: 'invalid' as const, fields: { position: 'Position must be between 1 and the next line.' } as Fields };
         }
 
-        const pricing = calculatePricing([...existing.map(databaseLineInput), input]);
+        const intended: DraftLineInput[] = [...existing];
+        intended.splice(requestedPosition - 1, 0, input);
+        const pricing = calculatePricing(intended);
         if (!pricing.withinSafeRange) {
           return { kind: 'invalid' as const, fields: { body: 'Document amounts exceed the supported safe integer range.' } as Fields };
         }
 
-        await transaction.execute(sql`SET CONSTRAINTS line_items_document_position_unique DEFERRED`);
-        await transaction.execute(sql`
-          UPDATE line_items SET position = position + 1
-          WHERE document_id = ${locked.documentId} AND position >= ${requestedPosition}
-        `);
-        const inserted = await transaction.execute<{ id: string }>(sql`
-          INSERT INTO line_items (
-            document_id, position, description, quantity, unit_price_cents, discount_cents, tax_rate_basis_points
-          ) VALUES (
-            ${locked.documentId}, ${requestedPosition}, ${input.description}, ${input.quantity}, ${input.unitPriceCents},
-            ${input.discountCents}, ${input.taxRateBasisPoints}
-          ) RETURNING id
-        `);
+        await replaceDraftLines(transaction, locked.documentId, intended);
         const [created] = await transaction.select().from(lineItems)
-          .where(eq(lineItems.id, inserted.rows[0].id))
+          .where(and(eq(lineItems.documentId, locked.documentId), eq(lineItems.position, requestedPosition)))
           .limit(1);
         await transaction.update(documents).set({ updatedAt: clock.now() }).where(eq(documents.id, locked.documentId));
         return { kind: 'created' as const, line: created };
@@ -725,42 +694,28 @@ export function createDocumentsRouter(clock: Clock): Router {
       const result = await withTenantTransaction(ownerId, async transaction => {
         const locked = await lockDraftLines(transaction, request.params.id);
         if (locked.kind !== 'draft') return locked;
-        const current = locked.lines.find(line => line.id === lineItemId);
-        if (!current) return { kind: 'line_missing' as const };
-
-        const input = {
-          description: parsed.values!.description ?? current.description,
-          quantity: parsed.values!.quantity ?? current.quantity,
-          unitPriceCents: parsed.values!.unitPriceCents ?? current.unitPriceCents,
-          discountCents: parsed.values!.discountCents ?? current.discountCents,
-          taxRateBasisPoints: parsed.values!.taxRateBasisPoints ?? current.taxRateBasisPoints,
-        };
+        const currentIndex = locked.lines.findIndex(line => line.id === lineItemId);
+        if (currentIndex === -1) return { kind: 'line_missing' as const };
+        const current = locked.lines[currentIndex];
+        const { position: newPosition = currentIndex + 1, ...changes } = parsed.values!;
+        const input = { ...current, ...changes };
         const inputErrors = linePricingErrors(input);
-        const newPosition = parsed.values!.position ?? current.position;
         if (newPosition > locked.lines.length) {
           inputErrors.position = 'Position must be between 1 and the current line count.';
         }
-        if (newPosition !== current.position && locked.lines.length >= MAX_DATABASE_INTEGER) {
+        if (newPosition !== currentIndex + 1 && locked.lines.length >= MAX_DATABASE_INTEGER) {
           inputErrors.position = 'This draft cannot contain more line items.';
         }
 
-        const pricing = calculatePricing(locked.lines.map(line =>
-          line.id === current.id ? input : databaseLineInput(line)));
+        const intended = locked.lines.filter(line => line.id !== current.id);
+        intended.splice(newPosition - 1, 0, input);
+        const pricing = calculatePricing(intended);
         if (!pricing.withinSafeRange) {
           inputErrors.body = 'Document amounts exceed the supported safe integer range.';
         }
         if (Object.keys(inputErrors).length > 0) return { kind: 'invalid' as const, fields: inputErrors };
 
-        if (newPosition !== current.position) {
-          await moveLinePosition(transaction, locked.documentId, current, newPosition);
-        }
-        await transaction.update(lineItems).set({
-          description: input.description,
-          quantity: input.quantity,
-          unitPriceCents: input.unitPriceCents,
-          discountCents: input.discountCents,
-          taxRateBasisPoints: input.taxRateBasisPoints,
-        }).where(eq(lineItems.id, current.id));
+        await replaceDraftLines(transaction, locked.documentId, intended);
         await transaction.update(documents).set({ updatedAt: clock.now() }).where(eq(documents.id, locked.documentId));
         const [updated] = await transaction.select().from(lineItems).where(eq(lineItems.id, current.id)).limit(1);
         return { kind: 'updated' as const, line: updated };
@@ -796,12 +751,7 @@ export function createDocumentsRouter(clock: Clock): Router {
         const current = locked.lines.find(line => line.id === lineItemId);
         if (!current) return { kind: 'line_missing' as const };
 
-        await transaction.delete(lineItems).where(eq(lineItems.id, current.id));
-        await transaction.execute(sql`SET CONSTRAINTS line_items_document_position_unique DEFERRED`);
-        await transaction.execute(sql`
-          UPDATE line_items SET position = position - 1
-          WHERE document_id = ${locked.documentId} AND position > ${current.position}
-        `);
+        await replaceDraftLines(transaction, locked.documentId, locked.lines.filter(line => line.id !== current.id));
         await transaction.update(documents).set({ updatedAt: clock.now() }).where(eq(documents.id, locked.documentId));
         return { kind: 'deleted' as const };
       });

@@ -147,6 +147,39 @@ describe('atomic draft save', () => {
     expect(await detail(client, first.id)).toEqual(updated);
   });
 
+  it('keeps one ordered line set across aggregate and legacy mutations', async () => {
+    const client = await signIn('aggregate-legacy-interleave@example.com');
+    const created = await save(client, body([line('Alpha'), line('Bravo'), line('Charlie')]));
+    expect(created.status).toBe(201);
+    const original = await created.json() as Document;
+    const [alpha, bravo, charlie] = original.lineItems;
+    const route = `${baseUrl}/documents/${original.id}/line-items`;
+    const inserted = await client.fetch(route, request({ ...line('Inserted'), position: 2 }));
+    expect(inserted.status).toBe(201);
+    const added = await inserted.json() as Document['lineItems'][number];
+    const moved = await client.fetch(`${route}/${charlie.id}`, {
+      ...request({ position: 1, quantity: 2, unitPriceCents: 250 }), method: 'PATCH',
+    });
+    expect(moved.status).toBe(200);
+    const current = await detail(client, original.id);
+    expect(current.lineItems.map(item => item.id)).toEqual([charlie.id, alpha.id, added.id, bravo.id]);
+    expect(current.amounts.totalCents).toBe(800);
+
+    const reordered = await save(client, body([
+      line('Bravo edited', bravo.id), { ...line('Charlie', charlie.id), quantity: 2, unitPriceCents: 250 },
+      line('Replacement'), line('Alpha', alpha.id),
+    ], original.id));
+    expect(reordered.status).toBe(200);
+    const saved = await reordered.json() as Document;
+    const deleted = await client.fetch(`${route}/${charlie.id}`, { ...request(undefined), method: 'DELETE' });
+    expect(deleted.status).toBe(204);
+    const final = await detail(client, original.id);
+    expect(final.lineItems.map(item => [item.id, item.position, item.description])).toEqual([
+      [bravo.id, 1, 'Bravo edited'], [saved.lineItems[2].id, 2, 'Replacement'], [alpha.id, 3, 'Alpha'],
+    ]);
+    expect(final.amounts.totalCents).toBe(300);
+  });
+
   it('replays a committed create and update with original response; changed key conflicts', async () => {
     const client = await signIn('aggregate-replay@example.com');
     const create = body([line('First')]);

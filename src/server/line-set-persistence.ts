@@ -1,4 +1,4 @@
-import { and, eq, notInArray, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import type { TenantTransaction } from '../db/client.js';
 import { lineItems } from '../db/schema.js';
 import type { ExactAmounts, LinePricingInput } from '../shared/pricing.js';
@@ -13,23 +13,26 @@ export async function replaceDraftLines(
   const retainedIds = lines.flatMap(line => line.id ? [line.id] : []);
   await transaction.delete(lineItems).where(and(
     eq(lineItems.documentId, documentId),
-    retainedIds.length > 0 ? notInArray(lineItems.id, retainedIds) : undefined,
+    sql`${lineItems.id} != ALL(${sql.param(retainedIds)}::uuid[])`,
   ));
 
   const positioned = lines.map((line, index) => ({ ...line, position: index + 1 }));
   const retained = positioned.filter(line => line.id !== undefined);
   if (retained.length > 0) {
-    const values = retained.map(line => sql`(
-      ${line.id}::uuid, ${line.position}::integer, ${line.description}::text,
-      ${line.quantity}::bigint, ${line.unitPriceCents}::bigint,
-      ${line.discountCents}::bigint, ${line.taxRateBasisPoints}::integer
-    )`);
     await transaction.execute(sql`
       UPDATE line_items AS target SET
         position = input.position, description = input.description, quantity = input.quantity,
         unit_price_cents = input.unit_price_cents, discount_cents = input.discount_cents,
         tax_rate_basis_points = input.tax_rate_basis_points
-      FROM (VALUES ${sql.join(values, sql`, `)}) AS input (
+      FROM unnest(
+        ${sql.param(retained.map(line => line.id))}::uuid[],
+        ${sql.param(retained.map(line => line.position))}::integer[],
+        ${sql.param(retained.map(line => line.description))}::text[],
+        ${sql.param(retained.map(line => line.quantity))}::bigint[],
+        ${sql.param(retained.map(line => line.unitPriceCents))}::bigint[],
+        ${sql.param(retained.map(line => line.discountCents))}::bigint[],
+        ${sql.param(retained.map(line => line.taxRateBasisPoints))}::integer[]
+      ) AS input (
         id, position, description, quantity, unit_price_cents, discount_cents, tax_rate_basis_points
       )
       WHERE target.document_id = ${documentId} AND target.id = input.id
