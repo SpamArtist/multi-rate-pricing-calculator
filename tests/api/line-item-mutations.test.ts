@@ -224,6 +224,49 @@ describe('draft line mutations', () => {
     expect(await response.json()).toMatchObject({ id: line.id, description: 'Updated' });
   });
 
+  it('rolls back a reordered set after a later failure and finalizes the committed order', async () => {
+    const { client } = await signedInClient('line-mutations-rollback@example.com');
+    const created = await client.fetch(`${baseUrl}/documents`, jsonRequest('POST', {
+      title: 'Rollback order', customerName: 'Customer', issueDate: '2026-10-14',
+    }));
+    const document = await created.json() as { id: string };
+    const route = `${baseUrl}/documents/${document.id}/line-items`;
+    const saved: Line[] = [];
+    for (const description of ['First', 'Middle', 'Last']) {
+      const inserted = await client.fetch(route, jsonRequest('POST', { description, quantity: 1, unitPriceCents: 100 }));
+      expect(inserted.status).toBe(201);
+      saved.push(await inserted.json() as Line);
+    }
+    await migrationPool.query(`
+      CREATE FUNCTION reject_legacy_reorder() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.id = '${document.id}'::uuid THEN RAISE EXCEPTION 'injected legacy reorder failure'; END IF;
+        RETURN NEW;
+      END $$
+    `);
+    await migrationPool.query('CREATE TRIGGER reject_legacy_reorder BEFORE UPDATE ON documents FOR EACH ROW EXECUTE FUNCTION reject_legacy_reorder()');
+    try {
+      const failed = await client.fetch(`${route}/${saved[2].id}`, jsonRequest('PATCH', { position: 1 }));
+      expect(failed.status).toBe(500);
+      const unchanged = await client.fetch(`${baseUrl}/documents/${document.id}`);
+      expect((await unchanged.json() as Detail).lineItems.map(item => [item.id, item.position]))
+        .toEqual(saved.map((item, index) => [item.id, index + 1]));
+    } finally {
+      await migrationPool.query('DROP TRIGGER IF EXISTS reject_legacy_reorder ON documents');
+      await migrationPool.query('DROP FUNCTION IF EXISTS reject_legacy_reorder()');
+    }
+    const moved = await client.fetch(`${route}/${saved[2].id}`, jsonRequest('PATCH', { position: 1 }));
+    expect(moved.status).toBe(200);
+    const finalized = await client.fetch(`${baseUrl}/documents/${document.id}/finalize`, jsonRequest('POST', {}));
+    expect(finalized.status).toBe(200);
+    const detail = await client.fetch(`${baseUrl}/documents/${document.id}`);
+    const finalizedDocument = await finalized.json() as Detail;
+    const detailDocument = await detail.json() as Detail;
+    expect(detailDocument).toEqual(finalizedDocument);
+    expect(detailDocument.lineItems.map(item => [item.id, item.position]))
+      .toEqual([[saved[2].id, 1], [saved[0].id, 2], [saved[1].id, 3]]);
+  });
+
   it('returns same 404 for foreign and missing document or line IDs', async () => {
     const ownerA = await signedInClient('line-mutations-owner-a@example.com');
     const ownerB = await signedInClient('line-mutations-owner-b@example.com');

@@ -258,31 +258,26 @@ async function lockDraftLines(transaction: TenantTransaction, documentId: string
 
 async function moveLinePosition(
   transaction: TenantTransaction,
-  lines: (typeof lineItems.$inferSelect)[],
-  lineId: string,
+  documentId: string,
+  line: typeof lineItems.$inferSelect,
   newPosition: number,
 ): Promise<void> {
-  const line = lines.find(item => item.id === lineId);
-  if (!line || line.position === newPosition) return;
-
-  const temporaryPosition = lines.length + 1;
-  await transaction.update(lineItems).set({ position: temporaryPosition }).where(eq(lineItems.id, line.id));
-
-  if (line.position < newPosition) {
-    const shifted = lines.filter(item => item.position > line.position && item.position <= newPosition)
-      .sort((left, right) => left.position - right.position);
-    for (const item of shifted) {
-      await transaction.update(lineItems).set({ position: item.position - 1 }).where(eq(lineItems.id, item.id));
-    }
-  } else {
-    const shifted = lines.filter(item => item.position >= newPosition && item.position < line.position)
-      .sort((left, right) => right.position - left.position);
-    for (const item of shifted) {
-      await transaction.update(lineItems).set({ position: item.position + 1 }).where(eq(lineItems.id, item.id));
-    }
-  }
-
-  await transaction.update(lineItems).set({ position: newPosition }).where(eq(lineItems.id, line.id));
+  if (line.position === newPosition) return;
+  await transaction.execute(sql`SET CONSTRAINTS line_items_document_position_unique DEFERRED`);
+  await transaction.execute(sql`
+    UPDATE line_items
+    SET position = CASE
+      WHEN id = ${line.id} THEN ${newPosition}
+      WHEN ${line.position} < ${newPosition} THEN position - 1
+      ELSE position + 1
+    END
+    WHERE document_id = ${documentId}
+      AND (
+        id = ${line.id}
+        OR (${line.position} < ${newPosition} AND position > ${line.position} AND position <= ${newPosition})
+        OR (${line.position} > ${newPosition} AND position >= ${newPosition} AND position < ${line.position})
+      )
+  `);
 }
 
 function sendLineMutationState(
@@ -713,9 +708,11 @@ export function createDocumentsRouter(clock: Clock): Router {
           return { kind: 'invalid' as const, fields: { body: 'Document amounts exceed the supported safe integer range.' } as Fields };
         }
 
-        for (const line of existing.filter(item => item.position >= requestedPosition).sort((a, b) => b.position - a.position)) {
-          await transaction.update(lineItems).set({ position: line.position + 1 }).where(eq(lineItems.id, line.id));
-        }
+        await transaction.execute(sql`SET CONSTRAINTS line_items_document_position_unique DEFERRED`);
+        await transaction.execute(sql`
+          UPDATE line_items SET position = position + 1
+          WHERE document_id = ${locked.documentId} AND position >= ${requestedPosition}
+        `);
         const inserted = await transaction.execute<{ id: string }>(sql`
           INSERT INTO line_items (
             document_id, position, description, quantity, unit_price_cents, discount_cents, tax_rate_basis_points
@@ -786,7 +783,7 @@ export function createDocumentsRouter(clock: Clock): Router {
         if (Object.keys(inputErrors).length > 0) return { kind: 'invalid' as const, fields: inputErrors };
 
         if (newPosition !== current.position) {
-          await moveLinePosition(transaction, locked.lines, current.id, newPosition);
+          await moveLinePosition(transaction, locked.documentId, current, newPosition);
         }
         await transaction.update(lineItems).set({
           description: input.description,
@@ -831,11 +828,11 @@ export function createDocumentsRouter(clock: Clock): Router {
         if (!current) return { kind: 'line_missing' as const };
 
         await transaction.delete(lineItems).where(eq(lineItems.id, current.id));
-        const shifted = locked.lines.filter(line => line.position > current.position)
-          .sort((left, right) => left.position - right.position);
-        for (const line of shifted) {
-          await transaction.update(lineItems).set({ position: line.position - 1 }).where(eq(lineItems.id, line.id));
-        }
+        await transaction.execute(sql`SET CONSTRAINTS line_items_document_position_unique DEFERRED`);
+        await transaction.execute(sql`
+          UPDATE line_items SET position = position - 1
+          WHERE document_id = ${locked.documentId} AND position > ${current.position}
+        `);
         await transaction.update(documents).set({ updatedAt: clock.now() }).where(eq(documents.id, locked.documentId));
         return { kind: 'deleted' as const };
       });
