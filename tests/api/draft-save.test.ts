@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { Client } from 'pg';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { closeDatabase } from '../../src/db/client.js';
 import { createApp } from '../../src/server/app.js';
 import { createApiSession } from '../support/api-session.js';
@@ -60,6 +61,65 @@ describe('atomic draft save', () => {
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     for (const ownerId of ownerIds) await deleteTestOwner(ownerId);
     await Promise.all([migrationPool.end(), closeDatabase()]);
+  });
+
+  it('keeps database round trips bounded as aggregate line counts grow', async () => {
+    const client = await signIn('aggregate-statement-count@example.com');
+    const counts: Array<Record<string, number>> = [];
+    for (const size of [2, 20]) {
+      const statements = vi.spyOn(Client.prototype, 'query');
+      const measured = async (values: SaveBody, expectedStatus: number) => {
+        statements.mockClear();
+        const response = await save(client, values);
+        expect(response.status).toBe(expectedStatus);
+        return { document: await response.json() as Document, count: statements.mock.calls.length };
+      };
+      try {
+        const created = await measured(body(Array.from({ length: size }, (_, index) => line(`Line ${index}`))), 201);
+        const metadata = await measured({ ...body(created.document.lineItems.map(item => line(item.description, item.id)), created.document.id), title: 'Metadata only' }, 200);
+        const retained = metadata.document.lineItems.filter((_, index) => index % 2 === 0).reverse();
+        const mixed = await measured(body(retained.flatMap(item => [
+          { ...line(`Changed ${item.description}`, item.id), unitPriceCents: 250 }, line('Inserted'),
+        ]), created.document.id), 200);
+        expect(mixed.document.lineItems.filter((_, index) => index % 2 === 0).map(item => item.id))
+          .toEqual(retained.map(item => item.id));
+        expect(mixed.document.lineItems.map(item => item.position)).toEqual(Array.from({ length: size }, (_, index) => index + 1));
+        expect(mixed.document.amounts.totalCents).toBe(size / 2 * 350);
+        const emptied = await measured(body([], created.document.id), 200);
+        expect(emptied.document.lineItems).toEqual([]);
+        counts.push({ create: created.count, metadata: metadata.count, mixed: mixed.count, empty: emptied.count });
+      } finally {
+        statements.mockRestore();
+      }
+    }
+    expect(counts[1]).toEqual(counts[0]);
+  });
+
+  it('does not rewrite unchanged lines during metadata-only saves', async () => {
+    const client = await signIn('aggregate-metadata-only@example.com');
+    const original = await (await save(client, body([line('Untouched')]))).json() as Document;
+    await migrationPool.query(`
+      CREATE FUNCTION reject_metadata_line_rewrite() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF OLD.document_id = '${original.id}'::uuid THEN
+          RAISE EXCEPTION 'metadata save must not rewrite lines';
+        END IF;
+        RETURN NEW;
+      END $$
+    `);
+    await migrationPool.query('CREATE TRIGGER reject_metadata_line_rewrite BEFORE UPDATE ON line_items FOR EACH ROW EXECUTE FUNCTION reject_metadata_line_rewrite()');
+    try {
+      const response = await save(client, {
+        ...body(original.lineItems.map(item => line(item.description, item.id)), original.id), title: 'New title',
+      });
+      expect(response.status).toBe(200);
+      const updated = await response.json() as Document;
+      expect(updated.title).toBe('New title');
+      expect(updated.lineItems).toEqual(original.lineItems);
+    } finally {
+      await migrationPool.query('DROP TRIGGER IF EXISTS reject_metadata_line_rewrite ON line_items');
+      await migrationPool.query('DROP FUNCTION IF EXISTS reject_metadata_line_rewrite()');
+    }
   });
 
   it('saves one mixed update with stable IDs, contiguous positions, and final aggregate amounts', async () => {

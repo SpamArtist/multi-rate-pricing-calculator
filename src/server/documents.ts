@@ -12,6 +12,7 @@ import {
 } from '../shared/pricing.js';
 import { databaseLineInput, projectDocumentSummaries, serializeDocument, serializeLineItem } from './document-projection.js';
 import { type Clock } from './clock.js';
+import { writeLineSnapshots } from './line-set-persistence.js';
 import {
   fields as createFields, inputError, isRecord, linePricingErrors, MAX_DATABASE_INTEGER,
   parseAmount, parseCustomerName, parseDescription, parseIssueDate, parsePosition, parseQuantity,
@@ -595,7 +596,7 @@ export function createDocumentsRouter(clock: Clock): Router {
           if (!priced.withinSafeRange) {
             validationFields[`lineItems[${index}].unitPriceCents`] = 'Line amounts exceed the supported safe integer range.';
           }
-          return { line, amounts: priced.amounts };
+          return { id: line.id, amounts: priced.amounts };
         });
         const documentAmounts = pricing.amounts;
         if (!amountsWithinSafeRange(documentAmounts)) {
@@ -604,14 +605,7 @@ export function createDocumentsRouter(clock: Clock): Router {
         if (Object.keys(validationFields).length > 0) return { kind: 'invalid' as const, fields: validationFields };
 
         const finalizedAt = clock.now();
-        for (const { line, amounts } of snapshots) {
-          await transaction.update(lineItems).set({
-            finalizedSubtotalCents: amounts.subtotalCents,
-            finalizedTaxableCents: amounts.taxableCents,
-            finalizedTaxCents: amounts.taxCents,
-            finalizedTotalCents: amounts.totalCents,
-          }).where(eq(lineItems.id, line.id));
-        }
+        await writeLineSnapshots(transaction, current.id, snapshots);
         await transaction.update(documents).set({
           status: 'finalized',
           finalizedAt,

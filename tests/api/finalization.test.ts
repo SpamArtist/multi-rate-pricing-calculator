@@ -1,6 +1,7 @@
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { Client } from 'pg';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { closeDatabase } from '../../src/db/client.js';
 import { createApp } from '../../src/server/app.js';
 import { createApiSession } from '../support/api-session.js';
@@ -75,6 +76,51 @@ describe('document finalization', () => {
     await close();
     for (const ownerId of createdOwnerIds) await deleteTestOwner(ownerId);
     await Promise.all([migrationPool.end(), closeDatabase()]);
+  });
+
+  it('keeps snapshot database round trips bounded as line counts grow', async () => {
+    const { client } = await signedInClient(`finalize-statement-count-${randomUUID()}@example.com`);
+    const counts: number[] = [];
+    for (const size of [1, 20]) {
+      const created = await client.fetch(`${baseUrl}/documents/draft-save`, jsonRequest('POST', {
+        mutationId: randomUUID(), title: 'Many snapshots', customerName: 'Customer', issueDate: '2026-10-14',
+        lineItems: Array.from({ length: size }, (_, index) => ({
+          description: `Line ${index}`, quantity: 2, unitPriceCents: 101, discountCents: 1, taxRateBasisPoints: 1900,
+        })),
+      }));
+      expect(created.status).toBe(201);
+      const document = await created.json() as DocumentRef;
+      const statements = vi.spyOn(Client.prototype, 'query');
+      try {
+        const response = await client.fetch(`${baseUrl}/documents/${document.id}/finalize`, jsonRequest('POST'));
+        expect(response.status).toBe(200);
+        const finalized = await response.json() as { lineItems: Array<{ amounts: { totalCents: number } }>; amounts: { totalCents: number } };
+        expect(finalized.lineItems).toHaveLength(size);
+        expect(finalized.lineItems.every(item => item.amounts.totalCents === 239)).toBe(true);
+        expect(finalized.amounts.totalCents).toBe(239 * size);
+        counts.push(statements.mock.calls.length);
+      } finally {
+        statements.mockRestore();
+      }
+    }
+    expect(counts[1]).toBe(counts[0]);
+  });
+
+  it('finalizes a persisted line set beyond the per-row parameter limit', async () => {
+    const { client, ownerId } = await signedInClient(`finalize-large-${randomUUID()}@example.com`);
+    const document = await createDocument(client, 'Large accumulated draft', 'Customer');
+    const size = 13_108; // Five bind parameters per snapshot would exceed PostgreSQL's 65,535 limit.
+    await withOwner(ownerId, connection => connection.query(
+      `INSERT INTO line_items (document_id, position, description, quantity, unit_price_cents)
+       SELECT $1, position, 'Accumulated line', 1, 100 FROM generate_series(1, $2::integer) AS position`,
+      [document.id, size],
+    ));
+    const response = await client.fetch(`${baseUrl}/documents/${document.id}/finalize`, jsonRequest('POST'));
+    expect(response.status).toBe(200);
+    const finalized = await response.json() as { status: string; lineItems: unknown[]; amounts: { totalCents: number } };
+    expect(finalized.status).toBe('finalized');
+    expect(finalized.lineItems).toHaveLength(size);
+    expect(finalized.amounts.totalCents).toBe(100 * size);
   });
 
   it('reports all completeness errors and keeps failed drafts editable', async () => {
@@ -207,6 +253,44 @@ describe('document finalization', () => {
       description: 'Additional line', quantity: 1, unitPriceCents: 0,
     }));
     expect(repaired.status).toBe(201);
+  });
+
+  it('rolls back the complete line snapshot set when the document transition fails', async () => {
+    const { client, ownerId } = await signedInClient(`finalize-document-rollback-${randomUUID()}@example.com`);
+    const document = await createDocument(client, 'Atomic transition', 'Customer');
+    for (const price of [100, 250, 500]) {
+      await addLine(client, document.id, { description: `Line ${price}`, quantity: 2, unitPriceCents: price, taxRateBasisPoints: 1900 });
+    }
+    await migrationPool.query(`
+      CREATE FUNCTION fail_test_document_transition() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.id = '${document.id}'::uuid AND NEW.status = 'finalized' THEN
+          RAISE EXCEPTION 'forced document transition failure';
+        END IF;
+        RETURN NEW;
+      END $$
+    `);
+    await migrationPool.query('CREATE TRIGGER fail_test_document_transition BEFORE UPDATE ON documents FOR EACH ROW EXECUTE FUNCTION fail_test_document_transition()');
+    try {
+      const failed = await client.fetch(`${baseUrl}/documents/${document.id}/finalize`, jsonRequest('POST'));
+      expect(failed.status).toBe(500);
+      const state = await withOwner(ownerId, connection => connection.query(
+        `SELECT d.status, d.finalized_at, d.finalized_total_cents,
+          l.finalized_subtotal_cents, l.finalized_taxable_cents, l.finalized_tax_cents, l.finalized_total_cents AS line_total
+         FROM documents d JOIN line_items l ON l.document_id = d.id WHERE d.id = $1`,
+        [document.id],
+      ));
+      expect(state.rows).toEqual(Array.from({ length: 3 }, () => ({
+        status: 'draft', finalized_at: null, finalized_total_cents: null,
+        finalized_subtotal_cents: null, finalized_taxable_cents: null, finalized_tax_cents: null, line_total: null,
+      })));
+    } finally {
+      await migrationPool.query('DROP TRIGGER IF EXISTS fail_test_document_transition ON documents');
+      await migrationPool.query('DROP FUNCTION IF EXISTS fail_test_document_transition()');
+    }
+    const retried = await client.fetch(`${baseUrl}/documents/${document.id}/finalize`, jsonRequest('POST'));
+    expect(retried.status).toBe(200);
+    expect(await retried.json()).toMatchObject({ status: 'finalized', amounts: { totalCents: 2023 } });
   });
 
   it('serializes concurrent line edits against finalization', async () => {

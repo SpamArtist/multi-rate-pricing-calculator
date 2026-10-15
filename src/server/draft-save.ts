@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { and, asc, eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { json } from 'express';
 import { documents, draftSaveMutations, lineItems } from '../db/schema.js';
 import { withTenantTransaction } from '../db/client.js';
@@ -7,27 +7,20 @@ import { amountsWithinSafeRange, calculatePricing } from '../shared/pricing.js';
 import { requireAuthenticated, type AuthenticatedHandler } from './auth.js';
 import type { Clock } from './clock.js';
 import { serializeDocument } from './document-projection.js';
+import { replaceDraftLines, type DraftLineInput } from './line-set-persistence.js';
 import {
   fields as createFields, inputError, isRecord, linePricingErrors, parseAmount, parseCustomerName,
   parseDescription, parseIssueDate, parseQuantity, parseTaxRate, parseTitle, parseUuid, rejectUnknownFields,
   type Fields,
 } from './document-input.js';
 
-type DraftLine = {
-  id?: string;
-  description: string;
-  quantity: bigint;
-  unitPriceCents: bigint;
-  discountCents: bigint;
-  taxRateBasisPoints: number;
-};
 type DraftSave = {
   mutationId: string;
   documentId?: string;
   title: string;
   customerName: string;
   issueDate: string;
-  lineItems: DraftLine[];
+  lineItems: DraftLineInput[];
 };
 
 const LINE_FIELDS = ['id', 'description', 'quantity', 'unitPriceCents', 'discountCents', 'taxRateBasisPoints'];
@@ -60,7 +53,7 @@ function parseDraftSave(body: unknown): { values?: DraftSave; fields: Fields } {
   if (!Array.isArray(body.lineItems)) fields.lineItems = 'Send an ordered list of line items.';
   else if (body.lineItems.length > 2_147_483_647) fields.lineItems = 'This draft contains too many line items.';
 
-  const parsedLines: DraftLine[] = [];
+  const parsedLines: DraftLineInput[] = [];
   const parsedLineIndices: number[] = [];
   const seenIds = new Set<string>();
   if (Array.isArray(body.lineItems)) {
@@ -91,7 +84,7 @@ function parseDraftSave(body: unknown): { values?: DraftSave; fields: Fields } {
       for (const [field, message] of Object.entries(lineFields)) fields[`${path}.${field}`] = message;
       if (Object.keys(lineFields).length > 0 || description === undefined || quantity === undefined
         || unitPriceCents === undefined || discountCents === undefined || taxRateBasisPoints === undefined) continue;
-      const line: DraftLine = {
+      const line: DraftLineInput = {
         ...(id === undefined ? {} : { id }),
         description, quantity, unitPriceCents, discountCents, taxRateBasisPoints,
       };
@@ -184,40 +177,12 @@ export function draftSaveHandler(clock: Clock): AuthenticatedHandler[] {
           row = created;
         }
 
-        const existingLines = await transaction.select().from(lineItems)
-          .where(eq(lineItems.documentId, row.id)).orderBy(asc(lineItems.position));
+        const existingLines = await transaction.select({ id: lineItems.id }).from(lineItems)
+          .where(eq(lineItems.documentId, row.id));
         const existingIds = new Set(existingLines.map(line => line.id));
         if (values.lineItems.some(line => line.id && !existingIds.has(line.id))) throw new MissingDraft();
 
-        // Position uniqueness is deferred only inside this transaction. The final ordered set is contiguous.
-        await transaction.execute(sql`SET CONSTRAINTS line_items_document_position_unique DEFERRED`);
-        const requestedIds = new Set(values.lineItems.map(line => line.id).filter((id): id is string => id !== undefined));
-        for (const line of existingLines) {
-          if (!requestedIds.has(line.id)) await transaction.delete(lineItems).where(eq(lineItems.id, line.id));
-        }
-        for (const [index, line] of values.lineItems.entries()) {
-          const input = {
-            description: line.description,
-            quantity: line.quantity,
-            unitPriceCents: line.unitPriceCents,
-            discountCents: line.discountCents,
-            taxRateBasisPoints: line.taxRateBasisPoints,
-            position: index + 1,
-          };
-          if (line.id) {
-            await transaction.update(lineItems).set(input)
-              .where(and(eq(lineItems.id, line.id), eq(lineItems.documentId, row.id)));
-          } else {
-            await transaction.execute(sql`
-              INSERT INTO line_items (
-                document_id, position, description, quantity, unit_price_cents, discount_cents, tax_rate_basis_points
-              ) VALUES (
-                ${row.id}, ${input.position}, ${input.description}, ${input.quantity}, ${input.unitPriceCents},
-                ${input.discountCents}, ${input.taxRateBasisPoints}
-              )
-            `);
-          }
-        }
+        await replaceDraftLines(transaction, row.id, values.lineItems);
         await transaction.update(documents).set({
           title: values.title, customerName: values.customerName, issueDate: values.issueDate, updatedAt: clock.now(),
         }).where(eq(documents.id, row.id));
