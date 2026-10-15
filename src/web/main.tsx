@@ -1530,6 +1530,7 @@ function DocumentEditor({
                 aria-describedby={titleError ? 'document-title-error' : undefined}
                 onChange={event => changeField('title', event.currentTarget.value)}
               />
+              <span className="print-value">{values.title}</span>
               {titleError && <p className="field-error" id="document-title-error" role="alert">{titleError}</p>}
             </div>
             <div className="field">
@@ -1544,6 +1545,7 @@ function DocumentEditor({
                 aria-describedby={customerError ? 'customer-name-error' : undefined}
                 onChange={event => changeField('customerName', event.currentTarget.value)}
               />
+              <span className="print-value">{values.customerName}</span>
               {customerError && <p className="field-error" id="customer-name-error" role="alert">{customerError}</p>}
             </div>
             <div className="field">
@@ -1558,6 +1560,7 @@ function DocumentEditor({
                 aria-describedby={dateError ? 'issue-date-error' : undefined}
                 onChange={event => changeField('issueDate', event.currentTarget.value)}
               />
+              <span className="print-value">{values.issueDate ? formatDate(values.issueDate) : ''}</span>
               {dateError && <p className="field-error" id="issue-date-error" role="alert">{dateError}</p>}
             </div>
           </div>
@@ -1596,6 +1599,7 @@ function DocumentEditor({
                       if (syntax.test(value)) changeLine(line.key, name, value);
                     }}
                   />
+                  <span className="print-value">{line[name]}</span>
                   {error && <p className="field-error" id={errorId} role="alert">{error}</p>}
                 </div>
               );
@@ -1615,6 +1619,7 @@ function DocumentEditor({
                       aria-describedby={serverLineErrors[line.key]?.description ? `line-${line.key}-description-error` : undefined}
                       onChange={event => changeLine(line.key, 'description', event.currentTarget.value)}
                     />
+                    <span className="print-value">{line.description}</span>
                     {serverLineErrors[line.key]?.description && <p className="field-error" id={`line-${line.key}-description-error`} role="alert">{serverLineErrors[line.key].description}</p>}
                   </div>
                 </div>

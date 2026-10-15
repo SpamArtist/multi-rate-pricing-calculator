@@ -111,9 +111,10 @@ test('prints incomplete draft and frozen finalized detail without a print endpoi
     await expect(page.getByLabel('Document name')).toHaveValue('Brand workshop');
     await expect(page.getByLabel('Customer name')).toHaveValue('Alpen Studio');
     await expect(page.getByLabel('Issue date')).toHaveValue('2026-10-14');
-    await expect(page.getByLabel('Issue date')).toHaveCSS('appearance', 'none');
+    await expect(page.getByLabel('Issue date')).toBeHidden();
+    await expect(page.locator('.metadata-fields .print-value').nth(2)).toHaveText('14 Oct 2026');
     await expect(page.locator('.status-badge')).toHaveText('Draft');
-    await expect(page.locator('.status-badge')).toHaveCSS('text-transform', 'uppercase');
+    await expect(page.locator('.status-badge')).toHaveCSS('text-transform', 'none');
     await expect(page.getByTestId('line-item')).toHaveCount(2);
     expect(await page.locator('.line-description input').evaluateAll(inputs => inputs.map(input => (input as HTMLInputElement).value)))
       .toEqual(['', 'Print-ready files']);
@@ -161,13 +162,14 @@ test('prints incomplete draft and frozen finalized detail without a print endpoi
     expect(requestPaths.slice(pathsBeforeFinalPrint)).toEqual([]);
     await page.emulateMedia({ media: 'print' });
     await expect(page.locator('.status-badge')).toHaveText('Finalized');
-    await expect(page.locator('.status-badge')).toHaveCSS('text-transform', 'uppercase');
+    await expect(page.locator('.status-badge')).toHaveCSS('text-transform', 'none');
     await expect(page.locator('.app-topbar')).toBeHidden();
     for (const button of await page.locator('button').all()) await expect(button).toBeHidden();
     await expect(page.getByLabel('Document name')).toHaveValue('Brand workshop');
     await expect(page.getByLabel('Customer name')).toHaveValue('Alpen Studio');
     await expect(page.getByLabel('Issue date')).toHaveValue('2026-10-14');
-    await expect(page.getByLabel('Issue date')).toHaveCSS('appearance', 'none');
+    await expect(page.getByLabel('Issue date')).toBeHidden();
+    await expect(page.locator('.metadata-fields .print-value').nth(2)).toHaveText('14 Oct 2026');
     await expect(page.locator('.line-math').nth(0)).toHaveText('€59.97 subtotal − €10.00 discount = €49.97 taxable + €9.49 tax');
     await expect(page.locator('.line-math').nth(1)).toHaveText('€5.00 subtotal − €0.00 discount = €5.00 taxable + €0.38 tax');
     await expect(page.locator('.amount-list')).toContainText('€64.97');
