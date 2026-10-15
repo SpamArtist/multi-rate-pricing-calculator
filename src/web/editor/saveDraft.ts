@@ -25,7 +25,7 @@ export type SaveErrors =
   | ({ kind: 'finalization' } & FinalizationErrors);
 
 export type SaveDraftOutcome =
-  | { kind: 'auth-expired'; errors: SaveErrors | null }
+  | { kind: 'auth-expired'; errors: SaveErrors | null; navigateTo: string | null }
   | { kind: 'failed'; errors: SaveErrors | null; message: string; navigateTo: string | null }
   | { kind: 'saved'; document: DocumentData; message: string; navigateTo: string | null }
   | { kind: 'incomplete-draft'; document: DocumentData; lines: LineValues[]; message: string; navigateTo: string | null }
@@ -109,46 +109,52 @@ export async function saveEditorDraft(input: SaveDraftInput): Promise<SaveDraftO
   let authoritative = input.document;
   let pending = readPendingDraftSave(ownerId, documentId);
   let errors: SaveErrors | null = null;
-  let createdDocumentId: string | undefined;
+  let createdDocumentPath: string | null = null;
+  let recoveryDocumentId = documentId;
 
   try {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       if (!pending) {
         const desired = draftBody(authoritative?.id ?? documentId, values, localLines, authoritative);
         pending = { ...desired, signature: currentSignature };
-        storePendingDraftSave(ownerId, documentId, pending);
+        storePendingDraftSave(ownerId, recoveryDocumentId, pending);
       }
       const response = await fetch('/documents/draft-save', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(pending.body),
       });
-      if (response.status === 401) return { kind: 'auth-expired', errors };
+      if (response.status === 401) return { kind: 'auth-expired', errors, navigateTo: createdDocumentPath };
       if (!response.ok) {
         const error = await responseError(response);
         const submittedLines = pending.lineKeys.map(key => localLines.find(line => line.key === key) ?? { ...newLineValues(), key });
-        clearPendingDraftSave(ownerId, documentId);
+        clearPendingDraftSave(ownerId, recoveryDocumentId);
         errors = response.status === 422
           ? { kind: 'finalization', ...splitFinalizationErrors(error.fields ?? {}, submittedLines) }
           : null;
-        return { kind: 'failed', errors, message: error.message ?? 'Could not save this draft.', navigateTo: null };
+        return {
+          kind: 'failed', errors, message: error.message ?? 'Could not save this draft.',
+          navigateTo: createdDocumentPath,
+        };
       }
 
       const saved = await response.json() as DocumentData;
       localLines = attachServerIds(localLines, pending, saved);
       authoritative = saved;
-      clearPendingDraftSave(ownerId, documentId);
+      clearPendingDraftSave(ownerId, recoveryDocumentId);
+      if (!documentId) {
+        // Once creation is acknowledged, later requests must recover under that ID.
+        createdDocumentPath = destination(saved.id);
+        storeEditorValues(ownerId, saved.id, values);
+        storeEditorLines(ownerId, saved.id, localLines);
+        clearEditorValues(ownerId);
+        recoveryDocumentId = saved.id;
+      }
       if (pending.signature === currentSignature) break;
       pending = null;
     }
 
     const saved = authoritative!;
-    if (!documentId) {
-      createdDocumentId = saved.id;
-      storeEditorValues(ownerId, saved.id, values);
-      storeEditorLines(ownerId, saved.id, localLines);
-      clearEditorValues(ownerId);
-    }
     const savedLineKeys = pending?.lineKeys ?? [];
     const documentUrl = `/documents/${encodeURIComponent(saved.id)}`;
     if (finalizeAfterSave && (hasLineErrors || !previewAmounts)) {
@@ -169,7 +175,7 @@ export async function saveEditorDraft(input: SaveDraftInput): Promise<SaveDraftO
       const finalizeResponse = await fetch(`${documentUrl}/finalize`, {
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({}),
       });
-      if (finalizeResponse.status === 401) return { kind: 'auth-expired', errors };
+      if (finalizeResponse.status === 401) return { kind: 'auth-expired', errors, navigateTo: createdDocumentPath };
       if (!finalizeResponse.ok) {
         const error = await responseError(finalizeResponse);
         let finalizationErrors: FinalizationErrors | null = null;
@@ -180,7 +186,7 @@ export async function saveEditorDraft(input: SaveDraftInput): Promise<SaveDraftO
           storeEditorErrors(ownerId, saved.id, { ...finalizationErrors, submitted: true });
         }
         const detailResponse = await fetch(documentUrl);
-        if (detailResponse.status === 401) return { kind: 'auth-expired', errors };
+        if (detailResponse.status === 401) return { kind: 'auth-expired', errors, navigateTo: createdDocumentPath };
         let refreshed: { document: DocumentData; lines: LineValues[] } | null = null;
         if (detailResponse.ok) {
           const current = await detailResponse.json() as DocumentData;
@@ -208,7 +214,7 @@ export async function saveEditorDraft(input: SaveDraftInput): Promise<SaveDraftO
   } catch {
     return {
       kind: 'failed', errors, message: 'Connection failed. Your input is still here. Try again.',
-      navigateTo: createdDocumentId ? destination(createdDocumentId) : null,
+      navigateTo: createdDocumentPath,
     };
   }
 }

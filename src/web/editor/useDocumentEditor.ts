@@ -172,6 +172,7 @@ export function useDocumentEditor({ owner, documentId, onAuthExpired }: Document
       switch (outcome.kind) {
         case 'auth-expired':
           applySaveErrors(outcome.errors);
+          if (outcome.navigateTo) navigate(outcome.navigateTo);
           onAuthExpired();
           return;
         case 'failed':

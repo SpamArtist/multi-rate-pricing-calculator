@@ -113,6 +113,77 @@ test('new draft replay finds committed document after reload and applies later e
   }
 });
 
+for (const failure of ['http', 'lost-response', 'auth-expired'] as const) {
+  test(`new draft retains its identity when replay succeeds but the follow-up update fails (${failure})`, async ({ page }) => {
+    const email = `replay-followup-${randomUUID()}@example.com`;
+    try {
+      await page.goto('/');
+      await page.getByRole('button', { name: 'Create account' }).click();
+      await page.getByLabel('Email address').fill(email);
+      await page.getByLabel('Password').fill('A🔐b$cD');
+      await page.getByRole('button', { name: 'Create account' }).click();
+      await page.getByRole('button', { name: 'New document' }).click();
+      await page.getByLabel('Document name').fill('Recovered draft');
+      await page.getByRole('button', { name: 'Add line item' }).click();
+      await page.getByLabel('Line description').fill('Original line');
+
+      let requestCount = 0;
+      let created: { id: string; lineItems: Array<{ id: string }> };
+      await page.route('**/documents/draft-save', async route => {
+        requestCount += 1;
+        if (requestCount === 1) {
+          const response = await route.fetch();
+          created = await response.json();
+          return route.abort('failed');
+        }
+        if (requestCount === 3) {
+          if (failure === 'lost-response') {
+            await route.fetch();
+            return route.abort('failed');
+          }
+          return route.fulfill({
+            status: failure === 'auth-expired' ? 401 : 500, contentType: 'application/json',
+            body: JSON.stringify({ error: { message: 'Follow-up update failed.' } }),
+          });
+        }
+        return route.continue();
+      });
+
+      await page.getByRole('button', { name: 'Save as draft' }).click();
+      await expect(page.getByRole('alert')).toContainText('Connection failed');
+      await page.reload();
+      await page.getByLabel('Customer name').fill('Edit after lost response');
+      await page.getByRole('button', { name: 'Save as draft' }).click();
+      if (failure === 'auth-expired') {
+        await expect(page.getByRole('heading', { name: 'Sign in to your workspace' })).toBeVisible();
+        await page.getByLabel('Email address').fill(email);
+        await page.getByLabel('Password').fill('A🔐b$cD');
+        await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+      }
+      await expect(page.getByRole('button', { name: /^Save (as draft|changes)$/ })).toBeEnabled();
+      expect(requestCount).toBe(3);
+
+      // Reload must retain the recovered identity and current edits even after the second failure.
+      await page.reload();
+      await expect(page.getByLabel('Customer name')).toHaveValue('Edit after lost response');
+      await page.getByRole('button', { name: /^Save (as draft|changes)$/ }).click();
+      await expect(page).toHaveURL(new RegExp(`#/documents/${created!.id}$`));
+      await expect(page.getByRole('button', { name: 'Save changes' })).toBeEnabled();
+      const list = await (await page.context().request.get(new URL('/documents', page.url()).toString())).json() as {
+        items: Array<{ id: string }>;
+      };
+      expect(list.items.map(document => document.id)).toEqual([created!.id]);
+      const detail = await (await page.context().request.get(new URL(`/documents/${created!.id}`, page.url()).toString())).json() as {
+        customerName: string; lineItems: Array<{ id: string; description: string }>;
+      };
+      expect(detail.customerName).toBe('Edit after lost response');
+      expect(detail.lineItems).toMatchObject([{ id: created!.lineItems[0].id, description: 'Original line' }]);
+    } finally {
+      await migrationPool.query('DELETE FROM users WHERE email_canonical = $1', [email.toLowerCase()]);
+    }
+  });
+}
+
 test('lost finalization response keeps a new document at its created ID', async ({ page }) => {
   const email = `atomic-finalize-${randomUUID()}@example.com`;
   try {
