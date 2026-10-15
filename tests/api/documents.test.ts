@@ -1,5 +1,6 @@
 import { createServer } from 'node:http';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { Client } from 'pg';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { closeDatabase } from '../../src/db/client.js';
 import { createApp } from '../../src/server/app.js';
 import { createApiSession } from '../support/api-session.js';
@@ -44,6 +45,23 @@ function jsonRequest(method: string, body?: unknown): RequestInit {
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   };
+}
+
+async function countedLineFetches(url: string, client: ReturnType<typeof createApiSession>): Promise<number> {
+  const querySpy = vi.spyOn(Client.prototype, 'query');
+  try {
+    const response = await client.fetch(url);
+    expect(response.status).toBe(200);
+    await response.json();
+    return querySpy.mock.calls.filter(([statement]) => {
+      const query: unknown = statement;
+      const text = typeof query === 'string' ? query
+        : query && typeof query === 'object' && 'text' in query && typeof query.text === 'string' ? query.text : '';
+      return /^select\b/i.test(text.trim()) && /\bfrom\s+"?line_items"?\b/i.test(text);
+    }).length;
+  } finally {
+    querySpy.mockRestore();
+  }
 }
 
 async function createDraft(
@@ -247,6 +265,24 @@ describe('document drafts', () => {
     const beyondResponse = await client.fetch(`${baseUrl}/documents?search=acme&page=3`);
     const beyond = await beyondResponse.json() as { items: unknown[]; page: number; pageSize: number; totalItems: number; totalPages: number };
     expect(beyond).toEqual({ items: [], page: 3, pageSize: 25, totalItems: 26, totalPages: 2 });
+
+    expect(await countedLineFetches(`${baseUrl}/documents?search=acme`, client)).toBe(1);
+    expect(await countedLineFetches(`${baseUrl}/documents?search=acme&page=2`, client)).toBe(1);
+    expect(await countedLineFetches(`${baseUrl}/documents?search=acme&page=3`, client)).toBe(0);
+  });
+
+  it('lists finalized pages from snapshots without fetching line items', async () => {
+    const { client, ownerId } = await signedInClient('documents-list-finalized-query-count@example.com');
+    for (const title of ['First snapshot', 'Second snapshot']) {
+      const document = await createDraft(client, { title, customerName: 'Acme', issueDate: '2026-10-14' });
+      await addLine(client, document.id, { description: title, quantity: 1, unitPriceCents: 100 });
+      await finalizeDocument(client, document.id);
+    }
+    await withOwner(ownerId, connection => connection.query('UPDATE line_items SET tax_rate_basis_points = 10000 WHERE description = $1', ['First snapshot']));
+    expect(await countedLineFetches(`${baseUrl}/documents?status=finalized`, client)).toBe(0);
+    const response = await client.fetch(`${baseUrl}/documents?status=finalized`);
+    const list = await response.json() as { items: Array<{ amounts: { totalCents: number } }> };
+    expect(list.items.map(item => item.amounts.totalCents)).toEqual([100, 100]);
   });
 
   it('rejects unknown, repeated, malformed, and reversed list query values', async () => {
@@ -477,6 +513,10 @@ describe('document drafts', () => {
     expect(await detail.json()).toMatchObject({
       lineItems: [expect.objectContaining({ description: 'Safe maximum' })],
       amounts: { subtotalCents: Number.MAX_SAFE_INTEGER, totalCents: Number.MAX_SAFE_INTEGER },
+    });
+    const summary = await client.fetch(`${baseUrl}/documents`);
+    expect(await summary.json()).toMatchObject({
+      items: [expect.objectContaining({ id: document.id, amounts: expect.objectContaining({ totalCents: Number.MAX_SAFE_INTEGER }) })],
     });
   });
 

@@ -4,10 +4,10 @@ import { json, type Request, type RequestHandler } from 'express';
 import { documents, draftSaveMutations, lineItems } from '../db/schema.js';
 import { withTenantTransaction, type AuthenticatedOwnerId } from '../db/client.js';
 import { isCalendarDate } from '../shared/document-validation.js';
-import { amountsWithinSafeRange, calculateDocumentAmounts, calculateLineAmounts } from '../shared/pricing.js';
+import { amountsWithinSafeRange, calculatePricing } from '../shared/pricing.js';
 import { authenticatedOwnerId } from './auth.js';
 import type { Clock } from './clock.js';
-import { serializeDocument } from './documents.js';
+import { serializeDocument } from './document-projection.js';
 
 type Fields = Record<string, string>;
 type DraftLine = {
@@ -57,6 +57,7 @@ function parseDraftSave(body: unknown): { values?: DraftSave; fields: Fields } {
   else if (body.lineItems.length > 2_147_483_647) fields.lineItems = 'This draft contains too many line items.';
 
   const parsedLines: DraftLine[] = [];
+  const parsedLineIndices: number[] = [];
   const seenIds = new Set<string>();
   if (Array.isArray(body.lineItems)) {
     for (const [index, value] of body.lineItems.entries()) {
@@ -96,17 +97,21 @@ function parseDraftSave(body: unknown): { values?: DraftSave; fields: Fields } {
         discountCents: BigInt(value.discountCents as number),
         taxRateBasisPoints: value.taxRateBasisPoints as number,
       };
-      const amounts = calculateLineAmounts(line);
-      if (line.discountCents > amounts.subtotalCents) {
-        fields[`${path}.discountCents`] = 'Discount cannot exceed the line subtotal.';
-      }
-      if (!amountsWithinSafeRange(amounts)) {
-        fields[`${path}.body`] = 'Line amounts exceed the supported safe integer range.';
-      }
       parsedLines.push(line);
+      parsedLineIndices.push(index);
     }
   }
-  if (Object.keys(fields).length === 0 && !amountsWithinSafeRange(calculateDocumentAmounts(parsedLines))) {
+  const pricing = calculatePricing(parsedLines);
+  for (const [index, priced] of pricing.lines.entries()) {
+    const path = `lineItems[${parsedLineIndices[index]}]`;
+    if (priced.discountExceedsSubtotal) {
+      fields[`${path}.discountCents`] = 'Discount cannot exceed the line subtotal.';
+    }
+    if (!priced.withinSafeRange) {
+      fields[`${path}.body`] = 'Line amounts exceed the supported safe integer range.';
+    }
+  }
+  if (Object.keys(fields).length === 0 && !amountsWithinSafeRange(pricing.amounts)) {
     fields.body = 'Document amounts exceed the supported safe integer range.';
   }
   if (Object.keys(fields).length > 0) return { fields };

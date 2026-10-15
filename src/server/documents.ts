@@ -6,22 +6,14 @@ import { withTenantTransaction, type AuthenticatedOwnerId, type TenantTransactio
 import { isCalendarDate } from '../shared/document-validation.js';
 import {
   amountsWithinSafeRange,
-  calculateDocumentAmounts,
-  calculateLineAmounts,
+  calculatePricing,
   MAX_SAFE_AMOUNT,
   type LinePricingInput,
 } from '../shared/pricing.js';
+import { databaseLineInput, projectDocumentSummaries, serializeDocument, serializeLineItem } from './document-projection.js';
 import { type Clock } from './clock.js';
 
 type Fields = Record<string, string>;
-type Amounts = {
-  subtotalCents: number;
-  discountCents: number;
-  taxableCents: number;
-  taxCents: number;
-  totalCents: number;
-};
-
 type DocumentFields = {
   title: string;
   customerName: string;
@@ -196,11 +188,6 @@ function sendNotFound(response: Parameters<RequestHandler>[1]): void {
   response.status(404).json({ error: { code: 'not_found', message: 'Document not found.' } });
 }
 
-function toSafeNumber(value: bigint): number {
-  if (value < 0n || value > MAX_SAFE_AMOUNT) throw new RangeError('Document amount exceeds the safe integer range.');
-  return Number(value);
-}
-
 function parseLineFields(body: unknown, required: readonly string[] = []): { fields: Fields; values?: ParsedLineValues } {
   const fields = Object.create(null) as Fields;
   if (!isRecord(body)) {
@@ -256,23 +243,13 @@ function completeLineInput(values: ParsedLineValues): CompleteLineInput {
   };
 }
 
-function databaseLineInput(line: typeof lineItems.$inferSelect): CompleteLineInput {
-  return {
-    description: line.description,
-    quantity: line.quantity,
-    unitPriceCents: line.unitPriceCents,
-    discountCents: line.discountCents,
-    taxRateBasisPoints: line.taxRateBasisPoints,
-  };
-}
-
 function lineValidation(input: CompleteLineInput): Fields {
   const fields = Object.create(null) as Fields;
-  const amounts = calculateLineAmounts(input);
-  if (input.discountCents > amounts.subtotalCents) {
+  const priced = calculatePricing([input]).lines[0];
+  if (priced.discountExceedsSubtotal) {
     fields.discountCents = 'Discount cannot exceed the line subtotal.';
   }
-  if (!amountsWithinSafeRange(amounts)) {
+  if (!priced.withinSafeRange) {
     fields.body = 'Line amounts exceed the supported safe integer range.';
   }
   return fields;
@@ -337,107 +314,6 @@ function sendLineMutationState(
   return false;
 }
 
-function serializeLineItem(line: typeof lineItems.$inferSelect, requireSnapshot = false) {
-  return {
-    id: line.id,
-    position: line.position,
-    description: line.description,
-    quantity: toSafeNumber(line.quantity),
-    unitPriceCents: toSafeNumber(line.unitPriceCents),
-    discountCents: toSafeNumber(line.discountCents),
-    taxRateBasisPoints: line.taxRateBasisPoints,
-    amounts: lineAmounts(line, requireSnapshot),
-  };
-}
-
-function inputLineAmounts(line: typeof lineItems.$inferSelect): Amounts {
-  const amounts = calculateLineAmounts(databaseLineInput(line));
-  return {
-    subtotalCents: toSafeNumber(amounts.subtotalCents),
-    discountCents: toSafeNumber(amounts.discountCents),
-    taxableCents: toSafeNumber(amounts.taxableCents),
-    taxCents: toSafeNumber(amounts.taxCents),
-    totalCents: toSafeNumber(amounts.totalCents),
-  };
-}
-
-function lineAmounts(line: typeof lineItems.$inferSelect, requireSnapshot = false): Amounts {
-  if (
-    line.finalizedSubtotalCents === null
-    || line.finalizedTaxableCents === null
-    || line.finalizedTaxCents === null
-    || line.finalizedTotalCents === null
-  ) {
-    if (requireSnapshot) throw new RangeError('Finalized line snapshot is incomplete.');
-    return inputLineAmounts(line);
-  }
-  return {
-    subtotalCents: toSafeNumber(line.finalizedSubtotalCents),
-    discountCents: toSafeNumber(line.discountCents),
-    taxableCents: toSafeNumber(line.finalizedTaxableCents),
-    taxCents: toSafeNumber(line.finalizedTaxCents),
-    totalCents: toSafeNumber(line.finalizedTotalCents),
-  };
-}
-
-function snapshotAmounts(row: typeof documents.$inferSelect): Amounts | undefined {
-  const values = [
-    row.finalizedSubtotalCents,
-    row.finalizedDiscountCents,
-    row.finalizedTaxableCents,
-    row.finalizedTaxCents,
-    row.finalizedTotalCents,
-  ];
-  if (values.some(value => value === null)) return undefined;
-  return {
-    subtotalCents: toSafeNumber(row.finalizedSubtotalCents!),
-    discountCents: toSafeNumber(row.finalizedDiscountCents!),
-    taxableCents: toSafeNumber(row.finalizedTaxableCents!),
-    taxCents: toSafeNumber(row.finalizedTaxCents!),
-    totalCents: toSafeNumber(row.finalizedTotalCents!),
-  };
-}
-
-export async function serializeDocument(transaction: TenantTransaction, row: typeof documents.$inferSelect) {
-  const lines = await transaction.select().from(lineItems)
-    .where(eq(lineItems.documentId, row.id))
-    .orderBy(asc(lineItems.position), asc(lineItems.id));
-  const finalized = row.status === 'finalized';
-  const lineItemsResponse = lines.map(line => serializeLineItem(line, finalized));
-
-  const calculated = lines.reduce((total, line) => {
-    const amounts = lineAmounts(line);
-    total.subtotalCents += BigInt(amounts.subtotalCents);
-    total.discountCents += BigInt(amounts.discountCents);
-    total.taxableCents += BigInt(amounts.taxableCents);
-    total.taxCents += BigInt(amounts.taxCents);
-    total.totalCents += BigInt(amounts.totalCents);
-    return total;
-  }, { subtotalCents: 0n, discountCents: 0n, taxableCents: 0n, taxCents: 0n, totalCents: 0n });
-  const persistedAmounts = snapshotAmounts(row);
-  if (finalized && !persistedAmounts) throw new RangeError('Finalized document snapshot is incomplete.');
-  const amounts = persistedAmounts ?? {
-    subtotalCents: toSafeNumber(calculated.subtotalCents),
-    discountCents: toSafeNumber(calculated.discountCents),
-    taxableCents: toSafeNumber(calculated.taxableCents),
-    taxCents: toSafeNumber(calculated.taxCents),
-    totalCents: toSafeNumber(calculated.totalCents),
-  };
-
-  return {
-    id: row.id,
-    title: row.title,
-    customerName: row.customerName,
-    issueDate: row.issueDate,
-    status: row.status,
-    createdAt: row.createdAt.toISOString(),
-    updatedAt: row.updatedAt.toISOString(),
-    finalizedAt: row.finalizedAt?.toISOString() ?? null,
-    lineItems: lineItemsResponse,
-    amounts,
-  };
-}
-
 function sessionRequired(response: Parameters<RequestHandler>[1]): void {
   response.status(401).json({ error: { code: 'unauthenticated', message: 'Sign in to continue.' } });
 }
@@ -488,17 +364,7 @@ export function createDocumentsRouter(clock: Clock): Router {
           .orderBy(issueDateOrder, asc(documents.id))
           .limit(DOCUMENT_PAGE_SIZE)
           .offset(offset);
-        const items = await Promise.all(rows.map(async row => {
-          const document = await serializeDocument(transaction, row);
-          return {
-            id: document.id,
-            title: document.title,
-            customerName: document.customerName,
-            issueDate: document.issueDate,
-            status: document.status,
-            amounts: document.amounts,
-          };
-        }));
+        const items = await projectDocumentSummaries(transaction, rows);
         return {
           items,
           page: query.page,
@@ -747,6 +613,7 @@ export function createDocumentsRouter(clock: Clock): Router {
         if (!current.customerName.trim()) validationFields.customerName = 'Enter a customer name.';
         if (lines.length === 0) validationFields.lineItems = 'Add at least one line item.';
 
+        const pricing = calculatePricing(lines.map(databaseLineInput));
         const snapshots = lines.map((line, index) => {
           const input = databaseLineInput(line);
           if (line.quantity > MAX_SAFE_AMOUNT) {
@@ -764,16 +631,16 @@ export function createDocumentsRouter(clock: Clock): Router {
           if (!input.description.trim()) {
             validationFields[`lineItems[${index}].description`] = 'Enter a line description.';
           }
-          const lineAmounts = calculateLineAmounts(input);
-          if (input.discountCents > lineAmounts.subtotalCents) {
+          const priced = pricing.lines[index];
+          if (priced.discountExceedsSubtotal) {
             validationFields[`lineItems[${index}].discountCents`] = 'Discount cannot exceed the line subtotal.';
           }
-          if (!amountsWithinSafeRange(lineAmounts)) {
+          if (!priced.withinSafeRange) {
             validationFields[`lineItems[${index}].unitPriceCents`] = 'Line amounts exceed the supported safe integer range.';
           }
-          return { line, amounts: lineAmounts };
+          return { line, amounts: priced.amounts };
         });
-        const documentAmounts = calculateDocumentAmounts(lines.map(databaseLineInput));
+        const documentAmounts = pricing.amounts;
         if (!amountsWithinSafeRange(documentAmounts)) {
           validationFields.body = 'Document amounts exceed the supported safe integer range.';
         }
@@ -854,8 +721,8 @@ export function createDocumentsRouter(clock: Clock): Router {
           return { kind: 'invalid' as const, fields: { position: 'Position must be between 1 and the next line.' } as Fields };
         }
 
-        const totals = calculateDocumentAmounts([...existing.map(databaseLineInput), input]);
-        if (!amountsWithinSafeRange(totals)) {
+        const pricing = calculatePricing([...existing.map(databaseLineInput), input]);
+        if (!pricing.withinSafeRange) {
           return { kind: 'invalid' as const, fields: { body: 'Document amounts exceed the supported safe integer range.' } as Fields };
         }
 
@@ -923,9 +790,9 @@ export function createDocumentsRouter(clock: Clock): Router {
           inputErrors.position = 'This draft cannot contain more line items.';
         }
 
-        const proposedAmounts = calculateDocumentAmounts(locked.lines.map(line =>
+        const pricing = calculatePricing(locked.lines.map(line =>
           line.id === current.id ? input : databaseLineInput(line)));
-        if (!amountsWithinSafeRange(proposedAmounts)) {
+        if (!pricing.withinSafeRange) {
           inputErrors.body = 'Document amounts exceed the supported safe integer range.';
         }
         if (Object.keys(inputErrors).length > 0) return { kind: 'invalid' as const, fields: inputErrors };
