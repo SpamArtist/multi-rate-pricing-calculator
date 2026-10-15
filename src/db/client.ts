@@ -2,12 +2,12 @@ import { ExtractTablesWithRelations, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import type { NodePgTransaction } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
-import { documents, lineItems, sessions, users } from './schema.js';
+import { documents, draftSaveMutations, lineItems, sessions, users } from './schema.js';
 
 const connectionString = process.env.DATABASE_URL
   ?? 'postgres://pricing_runtime:pricing_runtime@127.0.0.1:5432/pricing';
 const pool = new Pool({ connectionString });
-const schema = { users, sessions, documents, lineItems };
+const schema = { users, sessions, documents, lineItems, draftSaveMutations };
 export const db = drizzle(pool, { schema });
 
 export type AuthenticatedOwnerId = string & { readonly __authenticatedOwnerId: true };

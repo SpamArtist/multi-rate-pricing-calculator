@@ -220,6 +220,27 @@ describe('runtime role tenant isolation', () => {
       .rejects.toThrow('Authenticated owner ID must be a UUID.');
   });
 
+  it('isolates draft save replay records and prevents runtime owners from changing replay keys', async () => {
+    const mutationId = testOwnerId();
+    await withOwner(ownerA, client => client.query(
+      'INSERT INTO draft_save_mutations (owner_id, mutation_id, request_hash) VALUES ($1, $2, $3)',
+      [ownerA, mutationId, 'request-a'],
+    ));
+    const hidden = await withOwner(ownerB, client => client.query(
+      'SELECT mutation_id FROM draft_save_mutations WHERE mutation_id = $1', [mutationId],
+    ));
+    expect(hidden.rows).toEqual([]);
+    const noIdentity = await testPool.query('SELECT mutation_id FROM draft_save_mutations WHERE mutation_id = $1', [mutationId]);
+    expect(noIdentity.rows).toEqual([]);
+    await expect(withOwner(ownerB, client => client.query(
+      'INSERT INTO draft_save_mutations (owner_id, mutation_id, request_hash) VALUES ($1, $2, $3)',
+      [ownerA, testOwnerId(), 'foreign'],
+    ))).rejects.toMatchObject({ code: '42501' });
+    await expect(withOwner(ownerA, client => client.query(
+      'UPDATE draft_save_mutations SET request_hash = $1 WHERE mutation_id = $2', ['changed', mutationId],
+    ))).rejects.toMatchObject({ code: '42501' });
+  });
+
   it('enforces user/session constraints and document/line defaults in PostgreSQL', async () => {
     await expect(migrationPool.query(
       `INSERT INTO users (id, email_display, email_canonical, password_hash)

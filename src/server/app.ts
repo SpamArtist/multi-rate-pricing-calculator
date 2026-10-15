@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { checkDatabase } from '../db/client.js';
 import { createAuthRouter, requireSameOriginForCookieMutations, type SigninRateLimitOptions, type SignupRateLimitOptions } from './auth.js';
 import { createDocumentsRouter } from './documents.js';
+import { draftSaveHandler } from './draft-save.js';
 import { createReportsRouter } from './reports.js';
 import { systemClock, type Clock } from './clock.js';
 
@@ -22,6 +23,7 @@ export function createApp(
 
   app.use(requireSameOriginForCookieMutations);
   app.use('/auth', createAuthRouter(clock, options.signupRateLimit, options.signinRateLimit));
+  app.post('/documents/draft-save', draftSaveHandler(clock));
   app.use('/documents', createDocumentsRouter(clock));
   app.use('/reports', createReportsRouter(clock));
 

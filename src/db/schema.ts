@@ -4,6 +4,7 @@ import {
   check,
   date,
   integer,
+  jsonb,
   pgTable,
   text,
   timestamp,
@@ -122,4 +123,14 @@ export const lineItems = pgTable('line_items', {
       AND ${table.finalizedTotalCents}::numeric = ${table.finalizedTaxableCents}::numeric + ${table.finalizedTaxCents}::numeric
     )
   `),
+]);
+
+export const draftSaveMutations = pgTable('draft_save_mutations', {
+  ownerId: uuid('owner_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  mutationId: uuid('mutation_id').notNull(),
+  requestHash: text('request_hash').notNull(),
+  response: jsonb('response').$type<Record<string, unknown>>(),
+  createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull(),
+}, table => [
+  unique('draft_save_mutations_owner_mutation_unique').on(table.ownerId, table.mutationId),
 ]);

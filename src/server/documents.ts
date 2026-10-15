@@ -398,7 +398,7 @@ function snapshotAmounts(row: typeof documents.$inferSelect): Amounts | undefine
   };
 }
 
-async function serializeDocument(transaction: TenantTransaction, row: typeof documents.$inferSelect) {
+export async function serializeDocument(transaction: TenantTransaction, row: typeof documents.$inferSelect) {
   const lines = await transaction.select().from(lineItems)
     .where(eq(lineItems.documentId, row.id))
     .orderBy(asc(lineItems.position), asc(lineItems.id));
