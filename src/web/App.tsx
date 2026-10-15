@@ -7,7 +7,7 @@ import { DocumentEditor } from './editor/DocumentEditor.js';
 import { useRoute } from './routing.js';
 
 export function App(): React.JSX.Element {
-  const { user, sessionChecked, authPending, onAuthExpired, signOut, form } = useAuth();
+  const { user, sessionChecked, signOutPending, sessionError, onAuthExpired, signOut, form } = useAuth();
   const route = useRoute();
 
   if (!sessionChecked) {
@@ -38,11 +38,13 @@ export function App(): React.JSX.Element {
         </nav>
         <div className="account-actions">
           <span className="account-email">{user.email}</span>
-          <button className="text-button" type="button" disabled={authPending} onClick={() => void signOut()}>
-            {authPending ? 'Signing out…' : 'Sign out'}
+          <button className="text-button" type="button" disabled={signOutPending} onClick={() => void signOut()}>
+            {signOutPending ? 'Signing out…' : 'Sign out'}
           </button>
         </div>
       </header>
+
+      {sessionError && <p className="request-error" role="alert" aria-label="Account error">{sessionError}</p>}
 
       {route.kind === 'dashboard' ? (
         <Dashboard key={user.id} user={user} onAuthExpired={onAuthExpired} />

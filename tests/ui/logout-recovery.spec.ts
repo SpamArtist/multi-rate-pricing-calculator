@@ -49,6 +49,9 @@ for (const failure of ['http', 'network', 'expired-session'] as const) {
         await expect(page.getByRole('heading', { name: 'Sign in to your workspace' })).toBeVisible();
       } else {
         await expect(page.getByRole('button', { name: 'Sign out' })).toBeEnabled();
+        await expect(page.getByRole('alert', { name: 'Account error' })).toHaveText(
+          failure === 'network' ? 'Connection failed. Check your network and try again.' : 'Logout failed.',
+        );
       }
       expect(await readRecovery()).toEqual(recoveryBeforeLogout);
 
@@ -63,9 +66,27 @@ for (const failure of ['http', 'network', 'expired-session'] as const) {
       await expect(page.getByLabel('Line description')).toHaveValue('Keep this local line');
       expect(await readRecovery()).toEqual(recoveryBeforeLogout);
 
+      if (failure !== 'expired-session') {
+        await page.getByRole('button', { name: 'Sign out' }).click();
+        await expect(page.getByRole('alert', { name: 'Account error' })).toBeVisible();
+      }
       await page.unroute('**/auth/logout');
-      await page.getByRole('button', { name: 'Sign out' }).click();
+      let releaseLogout!: () => void;
+      const logoutReleased = new Promise<void>(resolve => { releaseLogout = resolve; });
+      await page.route('**/auth/logout', async route => {
+        await logoutReleased;
+        await route.continue();
+      });
+      try {
+        await page.getByRole('button', { name: 'Sign out' }).click();
+        await expect(page.getByRole('button', { name: 'Signing out…' })).toBeDisabled();
+        await expect(page.getByRole('alert', { name: 'Account error' })).toHaveCount(0);
+        expect(await readRecovery()).toEqual(recoveryBeforeLogout);
+      } finally {
+        releaseLogout();
+      }
       await expect(page.getByRole('heading', { name: 'Sign in to your workspace' })).toBeVisible();
+      await expect(page.getByRole('alert')).toHaveCount(0);
       expect(await readRecovery()).toEqual({});
     } finally {
       await migrationPool.query('DELETE FROM users WHERE email_canonical = $1', [email.toLowerCase()]);

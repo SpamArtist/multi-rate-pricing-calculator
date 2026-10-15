@@ -18,6 +18,8 @@ export function useAuth() {
   const [serverAuthErrors, setServerAuthErrors] = React.useState<Partial<Record<keyof RegistrationValues, string>>>({});
   const [authMessage, setAuthMessage] = React.useState('');
   const [authPending, setAuthPending] = React.useState(false);
+  const [sessionError, setSessionError] = React.useState('');
+  const [signOutPending, setSignOutPending] = React.useState(false);
 
   React.useEffect(() => {
     let active = true;
@@ -38,6 +40,7 @@ export function useAuth() {
 
   const onAuthExpired = React.useCallback(() => {
     setUser(null);
+    setSessionError('');
     setMode('sign-in');
     setAuthMessage('Your session expired. Sign in to resume editing.');
   }, []);
@@ -70,6 +73,7 @@ export function useAuth() {
       }
       if (result.user) {
         setUser(result.user);
+        setSessionError('');
         setAuthValues(current => ({ ...current, password: '' }));
         setAuthMessage('');
       }
@@ -81,27 +85,28 @@ export function useAuth() {
   }
 
   async function signOut(): Promise<void> {
-    setAuthPending(true);
-    setAuthMessage('');
+    setSignOutPending(true);
+    setSessionError('');
     try {
       const response = await fetch('/auth/logout', { method: 'POST' });
       if (!response.ok) {
         const error = await responseError(response);
         if (response.status === 401) onAuthExpired();
-        else setAuthMessage(error.message ?? 'Could not sign out. Try again.');
+        else setSessionError(error.message ?? 'Could not sign out. Try again.');
         return;
       }
       if (user) clearUserEditorValues(user.id);
       setUser(null);
       setMode('sign-in');
+      setAuthMessage('');
       setAuthValues({ email: '', password: '' });
       setTouched({});
       setAuthSubmitted(false);
       navigate('/documents');
     } catch {
-      setAuthMessage('Connection failed. Check your network and try again.');
+      setSessionError('Connection failed. Check your network and try again.');
     } finally {
-      setAuthPending(false);
+      setSignOutPending(false);
     }
   }
 
@@ -135,7 +140,8 @@ export function useAuth() {
   return {
     user,
     sessionChecked,
-    authPending,
+    sessionError,
+    signOutPending,
     onAuthExpired,
     signOut,
     form: {
