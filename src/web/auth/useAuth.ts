@@ -81,7 +81,6 @@ export function useAuth() {
   }
 
   async function signOut(): Promise<void> {
-    if (user) clearUserEditorValues(user.id);
     setAuthPending(true);
     setAuthMessage('');
     try {
@@ -92,6 +91,7 @@ export function useAuth() {
         else setAuthMessage(error.message ?? 'Could not sign out. Try again.');
         return;
       }
+      if (user) clearUserEditorValues(user.id);
       setUser(null);
       setMode('sign-in');
       setAuthValues({ email: '', password: '' });
