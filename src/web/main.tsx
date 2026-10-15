@@ -1484,15 +1484,9 @@ function DocumentEditor({
             <span className={`status-badge ${document?.status ?? 'unsaved'}`}>
               {!document ? 'Unsaved' : document.status === 'draft' ? 'Draft' : 'Finalized'}
             </span>
-            {canEdit && <button className="primary-button" type="submit" disabled={pending}>
-              {pending ? 'Saving…' : documentId ? 'Save changes' : 'Save as draft'}
+            {canEdit && !documentId && <button className="secondary-button" type="submit" disabled={pending}>
+              {pending ? 'Saving…' : 'Save as draft'}
             </button>}
-            {canEdit && <button
-              className="secondary-button"
-              type="button"
-              disabled={pending}
-              onClick={() => void saveDraft(true)}
-            >{pending ? 'Finalizing…' : 'Finalize document'}</button>}
             {document && <button
               className="secondary-button"
               type="button"
@@ -1678,6 +1672,19 @@ function DocumentEditor({
           </dl>
           <div className="grand-total"><span>Document total</span><strong>{amounts ? formatEuro(amounts.totalCents) : '—'}</strong></div>
           <p className="calculation-note">Tax is rounded for each line, then summed.</p>
+          {canEdit && <div className="document-save-actions">
+            {documentId && <button className="secondary-button" type="submit" disabled={pending}>
+              {pending ? 'Saving…' : 'Save changes'}
+            </button>}
+            <button
+              className="primary-button"
+              type="button"
+              disabled={pending}
+              onClick={() => void saveDraft(true)}
+              aria-describedby="finalize-note"
+            >{pending ? 'Finalizing…' : 'Finalize document'}</button>
+            <p className="finalize-note" id="finalize-note">Finalization fixes this document permanently.</p>
+          </div>}
           {!canEdit && <p className="snapshot-note">Finalized documents are fixed snapshots.</p>}
         </section>
       </form>
