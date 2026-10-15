@@ -56,8 +56,20 @@ export function createApp(
     }
 
     const status = error && typeof error === 'object' && 'status' in error
-      ? (error as { status?: unknown }).status
+      ? error.status
       : undefined;
+    if (status === 413) {
+      response.status(413).json({
+        error: { code: 'request_too_large', message: 'Request is too large. Shorten text or remove items and try again.' },
+      });
+      return;
+    }
+    if (status === 415) {
+      response.status(415).json({
+        error: { code: 'unsupported_encoding', message: 'Send UTF-8 JSON with a supported content encoding.' },
+      });
+      return;
+    }
     if (status === 400) {
       response.status(422).json({
         error: {
