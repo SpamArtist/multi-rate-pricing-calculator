@@ -1,7 +1,6 @@
 # Issue #10 verification
 
-Status: local and negative-control evidence complete; green CI pending. Issue
-stays open for orchestrator review.
+Status: acceptance evidence complete; issue stays open for orchestrator review.
 Verified 2026-10-16 on `LLM/issue-10-ci-verification`, based on local
 `LLM/mvp-integration` commit `a8454cc`.
 
@@ -30,6 +29,6 @@ Workflow: [Production checks](https://github.com/SpamArtist/multi-rate-pricing-c
 | Result | Commit | Run |
 | --- | --- | --- |
 | Deliberate failure | `bea9880` temporarily changed health status expectation from `200` to `201`. Workflow removed DB volumes, applied migrations with `pricing_migrator`, then failed on exact assertion `expected 200 to be 201`; 72 API tests passed, 1 failed. | [Run 38883602027](https://github.com/SpamArtist/multi-rate-pricing-calculator/actions/runs/38883602027) |
-| Restored passing assertion | `200` expectation restored; run pending. | To record after completion. |
+| Restored passing assertion | `fa47687` restored expected `200`. Clean-volume reset and migration passed; typecheck/lint passed; API 12 files / 73 tests, DB 2 files / 10 tests, Playwright 56 tests passed. | [Run 38883909881](https://github.com/SpamArtist/multi-rate-pricing-calculator/actions/runs/38883909881) |
 
 Negative control changed only `tests/api/health.test.ts`; restored before final branch state. No application behavior changed.
