@@ -4,6 +4,7 @@ import { requireAuthenticated, type AuthenticatedResponse } from './auth.js';
 import { documents, lineItems } from '../db/schema.js';
 import { withTenantTransaction, type TenantTransaction } from '../db/client.js';
 import { isCalendarDate } from '../shared/document-validation.js';
+import { containsControlCharacters } from '../shared/text-validation.js';
 import {
   amountsWithinSafeRange,
   calculatePricing,
@@ -46,6 +47,9 @@ function parseDocumentListQuery(request: Request): { fields: Fields; values?: Do
   };
 
   const search = value('search') ?? '';
+  if (containsControlCharacters(search)) {
+    fields.search = 'Remove control characters from search.';
+  }
   const statusValue = value('status');
   const status: DocumentListStatus = statusValue === undefined ? 'all' : statusValue as DocumentListStatus;
   if (statusValue !== undefined && !['all', 'draft', 'finalized'].includes(statusValue)) {

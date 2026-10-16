@@ -81,6 +81,21 @@ export function createApp(
       return;
     }
 
+    let cause = error;
+    while (cause && typeof cause === 'object') {
+      if ('code' in cause && cause.code === '22021') {
+        response.status(422).json({
+          error: {
+            code: 'validation_failed',
+            message: 'Check the highlighted fields.',
+            fields: { body: 'Remove unsupported control characters.' },
+          },
+        });
+        return;
+      }
+      cause = 'cause' in cause ? cause.cause : undefined;
+    }
+
     response.status(500).json({
       error: { code: 'internal_error', message: 'Request failed.' },
     });

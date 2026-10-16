@@ -96,6 +96,8 @@ describe('POST /auth/sign-up', () => {
       { email: `nel-${randomUUID()}@example.com`, password: 'ab\u0085cde', field: 'password' },
       { email: `bad\u0085email-${randomUUID()}@example.com`, password: 'A🔐b$cD', field: 'email' },
       { email: `blank-${randomUUID()}@example.com`, password: ' \u2003 \u3000 ', field: 'password' },
+      { email: `nul\u0000x-${randomUUID()}@example.com`, password: 'A🔐b$cD', field: 'email' },
+      { email: `nul-password-${randomUUID()}@example.com`, password: 'abc\u0000def', field: 'password' },
     ];
 
     for (const entry of cases) {
@@ -109,8 +111,10 @@ describe('POST /auth/sign-up', () => {
       expect(payload.error.code).toBe('validation_failed');
       expect(payload.error.fields).toHaveProperty(entry.field);
 
-      const stored = await migrationPool.query('SELECT id FROM users WHERE email_canonical = $1', [entry.email.trim().toLowerCase()]);
-      expect(stored.rows).toEqual([]);
+      if (!entry.email.includes('\u0000')) {
+        const stored = await migrationPool.query('SELECT id FROM users WHERE email_canonical = $1', [entry.email.trim().toLowerCase()]);
+        expect(stored.rows).toEqual([]);
+      }
     }
 
     const extraEmail = `unknown-${randomUUID()}@example.com`;
@@ -162,6 +166,28 @@ describe('POST /auth/sign-up', () => {
         error: { code: 'rate_limited', message: 'Too many requests. Try again later.' },
       });
       expect(await migrationPool.query('SELECT id FROM users WHERE email_canonical = $1', ['blocked@example.com'])).toMatchObject({ rows: [] });
+    } finally {
+      await close(limitedServer);
+    }
+  });
+
+  it('does not charge non-JSON sign-up requests to the rate limit', async () => {
+    const limitedServer = createServer(createApp(undefined, clock, { signupRateLimit: { maxRequests: 1 } }));
+    const limitedUrl = await listen(limitedServer);
+    try {
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const junk = await fetch(`${limitedUrl}/auth/sign-up`, {
+          method: 'POST', headers: { 'content-type': 'text/plain' }, body: 'junk',
+        });
+        expect(junk.status).toBe(415);
+      }
+
+      const valid = await fetch(`${limitedUrl}/auth/sign-up`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: `unburned-${randomUUID()}@example.com`, password: 'A🔐b$cD' }),
+      });
+      expect(valid.status).toBe(201);
+      createdOwnerIds.push((await valid.json() as { user: { id: string } }).user.id);
     } finally {
       await close(limitedServer);
     }

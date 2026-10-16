@@ -1,5 +1,6 @@
 import { isCalendarDate } from '../shared/document-validation.js';
 import { calculatePricing, type LinePricingInput } from '../shared/pricing.js';
+import { containsControlCharacters } from '../shared/text-validation.js';
 
 export type Fields = Record<string, string>;
 
@@ -39,11 +40,11 @@ export function parseUuid(value: unknown): string | undefined {
 }
 
 export function parseTitle(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined;
+  return typeof value === 'string' && value.trim() !== '' && !containsControlCharacters(value) ? value.trim() : undefined;
 }
 
 export function parseCustomerName(value: unknown): string | undefined {
-  return typeof value === 'string' ? value.trim() : undefined;
+  return typeof value === 'string' && !containsControlCharacters(value) ? value.trim() : undefined;
 }
 
 export function parseIssueDate(value: unknown): string | undefined {
@@ -51,7 +52,7 @@ export function parseIssueDate(value: unknown): string | undefined {
 }
 
 export function parseDescription(value: unknown): string | undefined {
-  return typeof value === 'string' ? value.trim() : undefined;
+  return typeof value === 'string' && !containsControlCharacters(value) ? value.trim() : undefined;
 }
 
 export function parseQuantity(value: unknown): bigint | undefined {

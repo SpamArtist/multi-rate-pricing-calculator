@@ -1,3 +1,5 @@
+import { containsControlCharacters } from './text-validation.js';
+
 export const EMAIL_ERROR = 'Enter a valid email address.';
 export const PASSWORD_ERROR = 'Use 6 to 10 Unicode code points with no internal whitespace.';
 
@@ -19,7 +21,7 @@ export function validateRegistrationFields(emailValue: unknown, passwordValue: u
     fields.email = EMAIL_ERROR;
   } else {
     emailDisplay = trimUnicodeWhitespace(emailValue);
-    if (emailDisplay.length > 254 || !/^[^\p{White_Space}@]+@[^\p{White_Space}@]+\.[^\p{White_Space}@]+$/u.test(emailDisplay)) {
+    if (emailDisplay.length > 254 || containsControlCharacters(emailDisplay) || !/^[^\p{White_Space}@]+@[^\p{White_Space}@]+\.[^\p{White_Space}@]+$/u.test(emailDisplay)) {
       fields.email = EMAIL_ERROR;
     }
   }
@@ -30,7 +32,7 @@ export function validateRegistrationFields(emailValue: unknown, passwordValue: u
   } else {
     password = trimUnicodeWhitespace(passwordValue);
     const codePointLength = Array.from(password).length;
-    if (codePointLength < 6 || codePointLength > 10 || /\p{White_Space}/u.test(password)) {
+    if (codePointLength < 6 || codePointLength > 10 || containsControlCharacters(password) || /\p{White_Space}/u.test(password)) {
       fields.password = PASSWORD_ERROR;
     }
   }

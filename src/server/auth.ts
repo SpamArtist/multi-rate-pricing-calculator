@@ -79,6 +79,11 @@ function createRateLimiter(
   const buckets = new Map<string, { startedAt: number; count: number }>();
 
   return (request, response, next) => {
+    if (!/^application\/json(?:\s*;|\s*$)/i.test(request.get('content-type') ?? '')) {
+      response.status(415).json(errorResponse('unsupported_encoding', 'Send UTF-8 JSON with a supported content encoding.'));
+      return;
+    }
+
     const now = clock.now().getTime();
     for (const [key, bucket] of buckets) {
       if (now - bucket.startedAt >= windowMs) buckets.delete(key);

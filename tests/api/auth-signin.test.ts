@@ -305,4 +305,26 @@ describe('sign-in sessions', () => {
     clock.advance(60_001);
     expect((await signIn(client, emailCanonical, PASSWORD)).status).toBe(200);
   });
+
+  it('does not charge non-JSON sign-in requests to the rate limit', async () => {
+    const limitedServer = createServer(createApp(undefined, clock, { signinRateLimit: { maxRequests: 1 } }));
+    const limitedUrl = await listen(limitedServer);
+    try {
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const junk = await fetch(`${limitedUrl}/auth/sign-in`, {
+          method: 'POST', headers: { 'content-type': 'text/plain' }, body: 'junk',
+        });
+        expect(junk.status).toBe(415);
+      }
+
+      const valid = await fetch(`${limitedUrl}/auth/sign-in`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: emailDisplay, password: PASSWORD }),
+      });
+      expect(valid.status).toBe(200);
+      expect((await valid.json() as { user: { id: string } }).user.id).toBe(ownerId);
+    } finally {
+      await close(limitedServer);
+    }
+  });
 });

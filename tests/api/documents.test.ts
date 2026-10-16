@@ -186,6 +186,29 @@ describe('document drafts', () => {
     });
   });
 
+  it('rejects control characters in document text and search', async () => {
+    const { client } = await signedInClient('documents-control-characters@example.com');
+    for (const { body, field } of [
+      { body: { title: 'a\u0000b', issueDate: '2026-10-14' }, field: 'title' },
+      { body: { title: 'Draft', customerName: 'a\u0001b', issueDate: '2026-10-14' }, field: 'customerName' },
+    ]) {
+      const response = await client.fetch(`${baseUrl}/documents`, jsonRequest('POST', body));
+      expect(response.status).toBe(422);
+      expect(await response.json()).toMatchObject({ error: { code: 'validation_failed', fields: { [field]: expect.any(String) } } });
+    }
+
+    const document = await createDraft(client, { title: 'Valid', issueDate: '2026-10-14' });
+    const line = await client.fetch(`${baseUrl}/documents/${document.id}/line-items`, jsonRequest('POST', {
+      description: 'a\u0000b', quantity: 1, unitPriceCents: 100,
+    }));
+    expect(line.status).toBe(422);
+    expect(await line.json()).toMatchObject({ error: { code: 'validation_failed', fields: { description: expect.any(String) } } });
+
+    const search = await client.fetch(`${baseUrl}/documents?search=%00`);
+    expect(search.status).toBe(422);
+    expect(await search.json()).toMatchObject({ error: { code: 'validation_failed', fields: { search: expect.any(String) } } });
+  });
+
   it('searches customers, combines status and inclusive date filters, and returns current amounts', async () => {
     const { client } = await signedInClient('documents-list-filters@example.com');
     const draft = await createDraft(client, { title: 'Current draft', customerName: 'Acme Studio', issueDate: '2026-10-14' });
