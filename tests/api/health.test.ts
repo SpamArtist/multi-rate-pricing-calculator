@@ -24,7 +24,7 @@ describe('GET /health', () => {
 
   it('checks the runtime database role and returns deterministic health time', async () => {
     const response = await fetch(`${baseUrl}/health`);
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(201);
     expect(await response.json()).toEqual({
       status: 'ok',
       database: 'ok',
