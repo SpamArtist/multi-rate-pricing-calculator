@@ -8,10 +8,14 @@ while IFS= read -r -d '' path; do
       printf 'Generated evidence is tracked: %s\n' "$path" >&2
       found=1
       ;;
+    docs/issue-*-verification.md|*/docs/issue-*-verification.md)
+      printf 'Issue verification report is tracked: %s\n' "$path" >&2
+      found=1
+      ;;
   esac
 done < <(git ls-files -z)
 
 if (( found )); then
-  printf 'Move run output to an ignored directory and attach it to the test or CI report.\n' >&2
+  printf 'Keep run evidence outside Git; record issue results in the issue or CI run.\n' >&2
   exit 1
 fi

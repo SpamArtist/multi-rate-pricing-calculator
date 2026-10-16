@@ -23,6 +23,8 @@
 
 Write generated test output to ignored `test-results/` or `.artifacts/`. See `CODING_STANDARDS.md` when reviewing tests. CI checks generated evidence and direct prototype references with `scripts/check-generated-evidence.sh` and `scripts/check-test-isolation.sh`.
 
+For issue verification and check documentation, see `docs/agents/verification-records.md`.
+
 ## Agent skills
 
 ### Issue tracker
