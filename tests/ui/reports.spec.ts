@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
 import { expect, test } from '@playwright/test';
 import { Pool } from 'pg';
 
@@ -94,10 +93,9 @@ test('opens an on-demand local-month summary independent of Ledger filters', asy
     await expect(sidebar).toContainText('€1.90');
     await expect(sidebar).toContainText('1');
     await page.setViewportSize({ width: 1440, height: 1000 });
-    await mkdir('docs/evidence', { recursive: true });
-    await page.screenshot({ path: 'docs/evidence/issue-21-summary-sidebar.png' })
-      .then(body => test.info().attach('issue-21-summary-sidebar-desktop.png', { body, contentType: 'image/png' }));
-    await writeFile('docs/evidence/issue-21-summary-response.json', `${JSON.stringify(initialBody, null, 2)}\n`);
+    await test.info().attach('issue-21-summary-sidebar-desktop.png', {
+      body: await page.screenshot(), contentType: 'image/png',
+    });
     await test.info().attach('issue-21-summary-initial-api.json', {
       body: JSON.stringify(initialBody, null, 2), contentType: 'application/json',
     });

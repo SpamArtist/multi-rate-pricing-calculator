@@ -153,3 +153,5 @@ vite.config.ts.timestamp-*
 .local/
 playwright-report/
 test-results/
+.artifacts/
+docs/evidence/

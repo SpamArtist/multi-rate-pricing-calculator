@@ -12,6 +12,7 @@ jobs:
       PLAYWRIGHT_BROWSERS_PATH: .local/playwright
     steps:
       - uses: actions/checkout@v4
+      - run: bash scripts/check-generated-evidence.sh
       - uses: actions/setup-node@v4
         with:
           node-version: 24

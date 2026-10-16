@@ -4,11 +4,10 @@
 
 ## Recorded evidence
 
-- Desktop sidebar screenshot at 1440 × 1000: [issue-21-summary-sidebar.png](evidence/issue-21-summary-sidebar.png)
-- Persisted `GET /reports/summary` response captured by Playwright: [issue-21-summary-response.json](evidence/issue-21-summary-response.json)
+- Desktop sidebar screenshot at 1440 × 1000 and persisted `GET /reports/summary` response: attached to the Playwright test result.
 - Visual target: [Variant B desktop snapshot](../prototype/dashboard-editor/snapshots/ledger-summary-desktop.png)
 
-The screenshot and JSON are written by `tests/ui/reports.spec.ts`. The UI test confirms no report request before opening the sidebar, checks the viewer-local month, then changes Ledger page, search, status, sort, and dates while the report stays unchanged. A reversed report range shows an inline error and sends no request; repairing it returns the same persisted summary.
+The original captures are retained locally under the ignored `.artifacts/evidence/` directory. The UI test confirms no report request before opening the sidebar, checks the viewer-local month, then changes Ledger page, search, status, sort, and dates while the report stays unchanged. A reversed report range shows an inline error and sends no request; repairing it returns the same persisted summary.
 
 ## API coverage
 

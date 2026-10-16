@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
 import { expect, test, type Page } from '@playwright/test';
 import { Pool } from 'pg';
 
@@ -92,8 +91,9 @@ test('prints incomplete draft and frozen finalized detail without a print endpoi
       ],
       amounts: { subtotalCents: 6497, discountCents: 1000, taxableCents: 5497, taxCents: 987, totalCents: 6484 },
     });
-    await mkdir('docs/evidence', { recursive: true });
-    await writeFile('docs/evidence/issue-22-draft-document.json', `${JSON.stringify(draft, null, 2)}\n`);
+    await test.info().attach('issue-22-draft-document.json', {
+      body: JSON.stringify(draft, null, 2), contentType: 'application/json',
+    });
 
     const pathsBeforeDraftPrint = requestPaths.length;
     await page.getByRole('button', { name: 'Print' }).click();
@@ -126,8 +126,9 @@ test('prints incomplete draft and frozen finalized detail without a print endpoi
     await expect(page.locator('.amount-list')).toContainText('€9.87');
     await expect(page.locator('.grand-total')).toContainText('€64.84');
     expect(await page.evaluate(() => getComputedStyle(document.body).color)).toBe('oklch(0 0 none)');
-    await page.screenshot({ path: 'docs/evidence/issue-22-draft-print.png', fullPage: true });
-    await test.info().attach('issue-22-draft-print.png', { path: 'docs/evidence/issue-22-draft-print.png', contentType: 'image/png' });
+    await test.info().attach('issue-22-draft-print.png', {
+      body: await page.screenshot({ fullPage: true }), contentType: 'image/png',
+    });
 
     await page.emulateMedia({ media: 'screen' });
     await page.getByLabel('Line description').nth(0).fill('Brand workshop');
@@ -154,7 +155,9 @@ test('prints incomplete draft and frozen finalized detail without a print endpoi
       ],
       amounts: { subtotalCents: 6497, discountCents: 1000, taxableCents: 5497, taxCents: 987, totalCents: 6484 },
     });
-    await writeFile('docs/evidence/issue-22-finalized-document.json', `${JSON.stringify(finalized, null, 2)}\n`);
+    await test.info().attach('issue-22-finalized-document.json', {
+      body: JSON.stringify(finalized, null, 2), contentType: 'application/json',
+    });
 
     const pathsBeforeFinalPrint = requestPaths.length;
     await page.getByRole('button', { name: 'Print' }).click();
@@ -177,8 +180,9 @@ test('prints incomplete draft and frozen finalized detail without a print endpoi
     await expect(page.locator('.amount-list')).toContainText('€54.97');
     await expect(page.locator('.amount-list')).toContainText('€9.87');
     await expect(page.locator('.grand-total')).toContainText('€64.84');
-    await page.screenshot({ path: 'docs/evidence/issue-22-finalized-print.png', fullPage: true });
-    await test.info().attach('issue-22-finalized-print.png', { path: 'docs/evidence/issue-22-finalized-print.png', contentType: 'image/png' });
+    await test.info().attach('issue-22-finalized-print.png', {
+      body: await page.screenshot({ fullPage: true }), contentType: 'image/png',
+    });
 
     await page.emulateMedia({ media: 'screen' });
     await page.reload();
@@ -199,8 +203,9 @@ test('keeps dashboard, summary, and editor usable at 430px', async ({ page }) =>
     await expectNoHorizontalOverflow(page);
     await expect(page.getByRole('button', { name: 'Generate Summary' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'New document' })).toBeVisible();
-    await mkdir('docs/evidence', { recursive: true });
-    await page.screenshot({ path: 'docs/evidence/issue-22-dashboard-mobile.png', fullPage: true });
+    await test.info().attach('issue-22-dashboard-mobile.png', {
+      body: await page.screenshot({ fullPage: true }), contentType: 'image/png',
+    });
 
     await page.getByRole('button', { name: 'Generate Summary' }).click();
     const summary = page.getByRole('complementary', { name: 'Summary report' });
@@ -212,7 +217,9 @@ test('keeps dashboard, summary, and editor usable at 430px', async ({ page }) =>
     expect(summaryBounds).not.toBeNull();
     expect(summaryBounds!.x).toBeGreaterThanOrEqual(0);
     expect(summaryBounds!.x + summaryBounds!.width).toBeLessThanOrEqual(430);
-    await page.screenshot({ path: 'docs/evidence/issue-22-summary-mobile.png', fullPage: true });
+    await test.info().attach('issue-22-summary-mobile.png', {
+      body: await page.screenshot({ fullPage: true }), contentType: 'image/png',
+    });
     await page.getByRole('button', { name: 'Close summary' }).click();
     await expect(summary).toBeHidden();
 
@@ -262,8 +269,9 @@ test('keeps dashboard, summary, and editor usable at 430px', async ({ page }) =>
     expect(Math.abs(layout.lineFieldsRight - layout.lineTotalRight)).toBeLessThan(2);
     expect(Math.max(...layout.inputRightEdges)).toBeLessThanOrEqual(layout.viewportWidth);
     expect(Math.max(...layout.amountRightEdges)).toBeLessThanOrEqual(layout.viewportWidth);
-    await page.screenshot({ path: 'docs/evidence/issue-22-editor-mobile.png', fullPage: true });
-    await test.info().attach('issue-22-editor-mobile.png', { path: 'docs/evidence/issue-22-editor-mobile.png', contentType: 'image/png' });
+    await test.info().attach('issue-22-editor-mobile.png', {
+      body: await page.screenshot({ fullPage: true }), contentType: 'image/png',
+    });
   } finally {
     await cleanupPool.query('DELETE FROM users WHERE email_canonical = $1', [email.toLowerCase()]);
   }

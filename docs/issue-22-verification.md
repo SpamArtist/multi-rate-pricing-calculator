@@ -10,22 +10,17 @@ Playwright saved and reopened an incomplete draft with a blank first-line descri
 
 API amount values matched calculation contract: subtotal 6497 cents, discount 1000, taxable 5497, tax 987, total 6484. Ordered line totals were 5946 and 538 cents.
 
-- [Draft print screenshot](evidence/issue-22-draft-print.png)
-- [Finalized print screenshot](evidence/issue-22-finalized-print.png)
-- [Draft API response](evidence/issue-22-draft-document.json)
-- [Finalized API snapshot](evidence/issue-22-finalized-document.json)
+Draft and finalized print screenshots and API responses are attached to the Playwright test result.
 
 ## 430px evidence
 
 At 430 × 932, dashboard actions and the summary panel remained visible without horizontal overflow. In the editor, Playwright added two lines, edited all first-line inputs, removed the second line, and checked full arithmetic. Line total and all five document amounts stayed inside the viewport; line total aligned to the right edge of its input grid.
 
-- [Dashboard screenshot](evidence/issue-22-dashboard-mobile.png)
-- [Summary screenshot](evidence/issue-22-summary-mobile.png)
-- [Editor screenshot](evidence/issue-22-editor-mobile.png)
+Dashboard, summary, and editor screenshots are attached to the Playwright test result. Original captures are retained locally under the ignored `.artifacts/evidence/` directory.
 
 ## Prototype comparison
 
-Reviewed selected Variant B desktop and mobile editor snapshots, plus desktop dashboard and summary snapshots under `prototype/dashboard-editor/snapshots/`. Mobile editor keeps two-column line inputs, full-width arithmetic, and right-aligned totals. Production screenshots above confirm the same responsive behavior without horizontal clipping.
+Reviewed selected Variant B desktop and mobile editor snapshots, plus desktop dashboard and summary snapshots under `prototype/dashboard-editor/snapshots/`. Mobile editor keeps two-column line inputs, full-width arithmetic, and right-aligned totals. Playwright screenshots confirm the same responsive behavior without horizontal clipping.
 
 ## Checks
 
