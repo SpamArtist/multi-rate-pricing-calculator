@@ -7,7 +7,11 @@ function routeFromHash(): Route {
   const match = /^#\/documents(?:\/([^/?#]+))?$/.exec(window.location.hash);
   if (!match?.[1]) return { kind: 'dashboard' };
   if (match[1] === 'new') return { kind: 'new' };
-  return { kind: 'document', id: decodeURIComponent(match[1]) };
+  try {
+    return { kind: 'document', id: decodeURIComponent(match[1]) };
+  } catch {
+    return { kind: 'dashboard' };
+  }
 }
 
 export function useRoute(): Route & { key: number } {
