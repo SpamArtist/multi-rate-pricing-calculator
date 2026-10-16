@@ -19,12 +19,9 @@
 - If any detail is uncertain, state assumptions explicitly in the commit description.
 - Do not ask for permission for `git add` or `git commit` to create a commit.
 
-## Test files and prototypes
+## Test guidance
 
-- Files created by tests (screenshots, traces, PDFs, API captures) go in ignored `test-results/` or `.artifacts/`. Attach them to the test result or CI run when needed; do not commit them or link to them from tracked docs.
-- Files that tests read as inputs may be committed under `tests/fixtures/`. Create them independently from product requirements; do not copy or derive them from `prototype/`.
-- `prototype/` is for design review only. Tests must never read, serve, import, execute, or compare against prototype files.
-- Check staged paths before committing. CI runs `scripts/check-generated-evidence.sh` and `scripts/check-test-isolation.sh`.
+Write generated test output to ignored `test-results/` or `.artifacts/`. See `CODING_STANDARDS.md` when reviewing tests. CI checks generated evidence and direct prototype references with `scripts/check-generated-evidence.sh` and `scripts/check-test-isolation.sh`.
 
 ## Agent skills
 
