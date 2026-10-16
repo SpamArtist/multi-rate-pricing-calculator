@@ -19,16 +19,12 @@
 - If any detail is uncertain, state assumptions explicitly in the commit description.
 - Do not ask for permission for `git add` or `git commit` to create a commit.
 
-## Generated evidence
+## Test files and prototypes
 
-- Write test screenshots, traces, PDFs, API response captures, and other run output to the test runner's ignored output directory or `.artifacts/`.
-- Attach evidence to Playwright results or the relevant CI run when it needs to be shared. Keep verification notes in Git as text; do not link them to ignored local files.
-- Commit visual test fixtures only when production tests require those exact files; keep them under `tests/fixtures/`. Commit design references only when product documentation requires them; keep them with the design source. Tests must never use design references as fixtures. Never store either in `docs/evidence/`.
-- Inspect staged paths before committing. Do not force-add generated evidence; `scripts/check-generated-evidence.sh` enforces the tracked-directory rule in CI.
-
-## Test isolation
-
-- Tests must not read, serve, import, execute, or compare against files in `prototype/`. Use production behavior and independent fixtures or contract values as test inputs. `scripts/check-test-isolation.sh` checks direct test references in CI.
+- Files created by tests (screenshots, traces, PDFs, API captures) go in ignored `test-results/` or `.artifacts/`. Attach them to the test result or CI run when needed; do not commit them or link to them from tracked docs.
+- Files that tests read as inputs may be committed under `tests/fixtures/`. Create them independently from product requirements; do not copy or derive them from `prototype/`.
+- `prototype/` is for design review only. Tests must never read, serve, import, execute, or compare against prototype files.
+- Check staged paths before committing. CI runs `scripts/check-generated-evidence.sh` and `scripts/check-test-isolation.sh`.
 
 ## Agent skills
 
