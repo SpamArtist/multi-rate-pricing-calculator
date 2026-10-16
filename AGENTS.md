@@ -26,6 +26,10 @@
 - Commit visual fixtures or baselines only when tests or product documentation depend on those exact files. Store them with their source or fixture, never in `docs/evidence/`.
 - Inspect staged paths before committing. Do not force-add generated evidence; `scripts/check-generated-evidence.sh` enforces the tracked-directory rule in CI.
 
+## Test isolation
+
+- Tests must not read, serve, import, execute, or compare against files in `prototype/`. Use production behavior and independent fixtures or contract values as test inputs. `scripts/check-test-isolation.sh` checks direct test references in CI.
+
 ## Agent skills
 
 ### Issue tracker

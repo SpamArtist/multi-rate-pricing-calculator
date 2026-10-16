@@ -1,4 +1,3 @@
-import { readFile } from 'node:fs/promises';
 import { expect, test } from '@playwright/test';
 
 const amounts = { subtotalCents: 6497, discountCents: 1000, taxableCents: 5497, taxCents: 987, totalCents: 6484 };
@@ -27,8 +26,8 @@ for (const status of ['draft', 'finalized'] as const) {
     await expect(page.locator('.grand-total')).toContainText('€64.84');
     for (const actions of await page.locator('.line-actions').all()) await expect(actions).toBeHidden();
     await expect(page.locator('.status-badge')).toHaveCSS('text-transform', 'none');
-    // A paper page must retain the reference's three details columns, five numeric
-    // columns, and top-right status even when printing from a phone viewport.
+    // A paper page keeps three details columns, five numeric columns, and
+    // top-right status even when printing from a phone viewport.
     for (const width of [430, 794, 816, 1000]) {
       await page.setViewportSize({ width, height: 1123 });
       const layout = await page.evaluate(() => {
@@ -53,21 +52,6 @@ for (const status of ['draft', 'finalized'] as const) {
     await page.screenshot({ path: testInfo.outputPath(`${status}-print.png`), fullPage: true });
   });
 }
-
-test('selected Ledger prototype print reference', async ({ page }, testInfo) => {
-  await page.route('**/print-reference/**', async route => {
-    const file = new URL(route.request().url()).pathname.split('/').at(-1)!;
-    if (!['index.html', 'prototype.css', 'prototype.js'].includes(file)) return route.abort();
-    await route.fulfill({ body: await readFile(`prototype/dashboard-editor/${file}`), contentType: file.endsWith('.css') ? 'text/css' : file.endsWith('.js') ? 'text/javascript' : 'text/html' });
-  });
-  await page.goto('/print-reference/index.html?variant=B#document=PD-1048');
-  await expect(page.getByRole('heading', { name: 'Brand workshop', exact: true })).toBeVisible();
-  await page.emulateMedia({ media: 'print' });
-  await page.setViewportSize({ width: 794, height: 1123 });
-  await page.screenshot({ path: testInfo.outputPath('prototype-print.png'), fullPage: true });
-  await page.pdf({ path: testInfo.outputPath('prototype-A4.pdf'), format: 'A4', margin: { top: '14mm', right: '14mm', bottom: '14mm', left: '14mm' }, printBackground: true });
-});
-
 
 test('wraps current values and keeps long printed lines together across pages', async ({ page }, testInfo) => {
   const description = 'Brand workshop with research, strategy, visual identity and production handover for the entire customer team';
