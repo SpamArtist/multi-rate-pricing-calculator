@@ -129,6 +129,48 @@ describe('draft line mutations', () => {
       .toEqual([[d, 1, 'D'], [a, 2, 'A'], [c, 3, 'C']]);
   });
 
+  it('rejects quantity reduction that makes an existing discount exceed subtotal without writing partial changes', async () => {
+    const { client } = await signedInClient('line-mutations-quantity-discount@example.com');
+    const created = await client.fetch(`${baseUrl}/documents`, jsonRequest('POST', {
+      title: 'Quantity discount validation', issueDate: '2026-10-14',
+    }));
+    const document = await created.json() as { id: string };
+    const route = `${baseUrl}/documents/${document.id}/line-items`;
+    const inserted = await client.fetch(route, jsonRequest('POST', {
+      description: 'Discounted work', quantity: 2, unitPriceCents: 100, discountCents: 150,
+    }));
+    expect(inserted.status).toBe(201);
+    const line = await inserted.json() as Line;
+
+    const beforeResponse = await client.fetch(`${baseUrl}/documents/${document.id}`);
+    expect(beforeResponse.status).toBe(200);
+    const before = await beforeResponse.json() as Detail;
+    expect(before).toMatchObject({
+      lineItems: [expect.objectContaining({
+        id: line.id, position: 1, description: 'Discounted work', quantity: 2,
+        unitPriceCents: 100, discountCents: 150,
+        amounts: { subtotalCents: 200, discountCents: 150, taxableCents: 50, taxCents: 0, totalCents: 50 },
+      })],
+      amounts: { subtotalCents: 200, discountCents: 150, taxableCents: 50, taxCents: 0, totalCents: 50 },
+    });
+
+    const rejected = await client.fetch(`${route}/${line.id}`, jsonRequest('PATCH', { quantity: 1 }));
+    const rejection = await rejected.json();
+    const reloadedResponse = await client.fetch(`${baseUrl}/documents/${document.id}`);
+    expect(reloadedResponse.status).toBe(200);
+    const reloaded = await reloadedResponse.json() as Detail;
+    expect(reloaded.lineItems).toEqual(before.lineItems);
+    expect(reloaded.amounts).toEqual(before.amounts);
+
+    expect(rejected.status).toBe(422);
+    expect(rejection).toMatchObject({
+      error: {
+        code: 'validation_failed',
+        fields: { discountCents: expect.any(String) },
+      },
+    });
+  });
+
   it('rejects invalid partial edits and unsafe document totals without changing saved lines', async () => {
     const { client } = await signedInClient('line-mutations-validation@example.com');
     const created = await client.fetch(`${baseUrl}/documents`, jsonRequest('POST', {
