@@ -155,3 +155,4 @@ playwright-report/
 test-results/
 .artifacts/
 docs/evidence/
+output/pdf/
