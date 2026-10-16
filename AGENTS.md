@@ -19,6 +19,13 @@
 - If any detail is uncertain, state assumptions explicitly in the commit description.
 - Do not ask for permission for `git add` or `git commit` to create a commit.
 
+## Generated evidence
+
+- Write test screenshots, traces, PDFs, API response captures, and other run output to the test runner's ignored output directory or `.artifacts/`.
+- Attach evidence to Playwright results or the relevant CI run when it needs to be shared. Keep verification notes in Git as text; do not link them to ignored local files.
+- Commit visual fixtures or baselines only when tests or product documentation depend on those exact files. Store them with their source or fixture, never in `docs/evidence/`.
+- Inspect staged paths before committing. Do not force-add generated evidence; `scripts/check-generated-evidence.sh` enforces the tracked-directory rule in CI.
+
 ## Agent skills
 
 ### Issue tracker
