@@ -29,6 +29,7 @@
     "react-dom": "^19.2.0"
   },
   "devDependencies": {
+    "@eslint/css": "^2.0.1",
     "@eslint/js": "^10.0.0",
     "@playwright/test": "^1.56.1",
     "@types/express": "^5.0.5",
