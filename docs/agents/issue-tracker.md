@@ -2,6 +2,8 @@
 
 Issues and Wayfinder maps for this repo live in GitHub Issues. Use the `gh` CLI for all operations. The current MVP map is [Wayfinder: Multi-Rate Pricing Calculator MVP](https://github.com/SpamArtist/multi-rate-pricing-calculator/issues/1).
 
+The [Build approved Multi-Rate Pricing Calculator MVP issue](https://github.com/SpamArtist/multi-rate-pricing-calculator/issues/9) is the source of truth for the approved implementation contract. Keep contract amendments there; do not maintain a duplicate spec under `docs/`.
+
 ## Conventions
 
 - Infer the repository from the `origin` remote: `SpamArtist/multi-rate-pricing-calculator`.
