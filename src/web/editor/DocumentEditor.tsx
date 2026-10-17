@@ -156,7 +156,12 @@ export function DocumentEditor(props: DocumentEditorProps): React.JSX.Element {
             <div><dt>Sum of line taxes</dt><dd>{amounts ? formatEuro(amounts.taxCents) : '—'}</dd></div>
           </dl>
           <div className="grand-total"><span>Document total</span><strong>{amounts ? formatEuro(amounts.totalCents) : '—'}</strong></div>
-          <p className="calculation-note">Tax is rounded for each line, then summed.</p>
+          <div className="breakdown-notes">
+            <p className="calculation-note">Tax is rounded for each line, then summed.</p>
+            {canEdit
+              ? <p className="finalize-note" id="finalize-note">Finalization fixes this document permanently.</p>
+              : <p className="snapshot-note">Finalized documents are fixed snapshots.</p>}
+          </div>
           {canEdit && <div className="document-save-actions">
             {documentId && <button className="secondary-button" type="submit" disabled={pending}>
               {pending ? 'Saving…' : 'Save changes'}
@@ -168,9 +173,7 @@ export function DocumentEditor(props: DocumentEditorProps): React.JSX.Element {
               onClick={() => void saveDraft(true)}
               aria-describedby="finalize-note"
             >{pending ? 'Finalizing…' : 'Finalize document'}<PrototypeIcon name="arrow" /></button>
-            <p className="finalize-note" id="finalize-note">Finalization fixes this document permanently.</p>
           </div>}
-          {!canEdit && <p className="snapshot-note">Finalized documents are fixed snapshots.</p>}
         </section>
       </form>
     </main>
