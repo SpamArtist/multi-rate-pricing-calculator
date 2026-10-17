@@ -13,6 +13,7 @@
     "lint": "eslint .",
     "db:up": "docker compose up -d --wait postgres",
     "db:migrate": "node --env-file-if-exists=.env --import tsx scripts/migrate.ts",
+    "db:seed:large": "node --env-file-if-exists=.env --import tsx scripts/seed-large-local.ts",
     "check:api": "node --env-file-if-exists=.env ./node_modules/vitest/vitest.mjs run tests/api",
     "check:db": "node --env-file-if-exists=.env ./node_modules/vitest/vitest.mjs run tests/db",
     "check:ui": "PLAYWRIGHT_BROWSERS_PATH=.local/playwright node --env-file-if-exists=.env ./node_modules/playwright/cli.js test",
