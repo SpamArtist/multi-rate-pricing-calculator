@@ -353,6 +353,20 @@
   gap: 0.55rem;
 }
 
+@media (width >= 48rem) {
+  .document-save-actions {
+    grid-column: 1 / -1;
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: end;
+  }
+
+  .finalize-note {
+    flex-basis: 100%;
+    margin: 0;
+  }
+}
+
 .finalize-note {
   color: var(--muted);
   font-size: 0.71rem;
