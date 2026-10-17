@@ -1,6 +1,5 @@
-export interface ApiSession {
-  fetch(input: string | URL, init?: RequestInit): Promise<Response>;
-}
+import type { ApiSession } from './api-session.types.js';
+
 
 export function createApiSession(): ApiSession {
   const cookies = new Map<string, string>();

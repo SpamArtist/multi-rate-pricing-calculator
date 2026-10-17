@@ -1,25 +1,8 @@
+import type { DocumentValues, LineValues, EditableLineField, LineInputErrors, LinePreview } from './model.types.js';
 import { isCalendarDate } from '../../shared/document-validation.js';
 import { amountsWithinSafeRange, calculateDocumentAmounts, calculateLineAmounts, MAX_SAFE_AMOUNT } from '../../shared/pricing.js';
 import type { Amounts, DocumentData } from '../../shared/types/api-contracts.js';
 import type { FieldErrors } from '../../shared/types/field-errors.js';
-
-export type DocumentValues = { title: string; customerName: string; issueDate: string };
-export type LineValues = {
-  key: string;
-  id?: string;
-  description: string;
-  quantity: string;
-  unitPrice: string;
-  discount: string;
-  taxRate: string;
-  amounts?: Amounts;
-};
-export type EditableLineField = 'description' | 'quantity' | 'unitPrice' | 'discount' | 'taxRate';
-export type PersistedEditorErrors = {
-  document: FieldErrors;
-  lines: Record<string, Partial<Record<EditableLineField, string>>>;
-  submitted: boolean;
-};
 
 export function newLineValues(): LineValues {
   return {
@@ -71,14 +54,6 @@ function parseTaxInput(value: string): number | null {
   const basisPoints = BigInt(whole) * 100n + BigInt(fraction.padEnd(2, '0'));
   return basisPoints <= 10_000n ? Number(basisPoints) : null;
 }
-
-export type LineInputErrors = Partial<Record<'quantity' | 'unitPrice' | 'discount' | 'taxRate', string>>;
-export type LinePreview = { errors: LineInputErrors; amounts?: Amounts; input?: {
-  quantity: bigint;
-  unitPriceCents: bigint;
-  discountCents: bigint;
-  taxRateBasisPoints: number;
-} };
 
 export function previewLine(line: LineValues, useSnapshot = false): LinePreview {
   if (useSnapshot && line.amounts) return { errors: {}, amounts: line.amounts };

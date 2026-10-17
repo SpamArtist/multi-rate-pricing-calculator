@@ -1,50 +1,13 @@
-import type { Amounts, DocumentData, DraftSaveBody } from '../../shared/types/api-contracts.js';
+import type { SaveErrors, SaveDraftOutcome, SaveCheckpoint, SaveDraftInput, SavePhase } from './saveDraft.types.js';
+import type { DocumentData, DraftSaveBody } from '../../shared/types/api-contracts.js';
 import { responseError } from '../api/client.js';
+import { lineValuesFromDocument, newLineValues, previewLine, splitFinalizationErrors } from './model.js';
+import type { DocumentValues, LineValues } from './model.types.js';
 import {
-  type DocumentValues,
-  type LineValues,
-  lineValuesFromDocument,
-  newLineValues,
-  previewLine,
-  splitFinalizationErrors,
-} from './model.js';
-import {
-  clearEditorValues,
-  clearPendingDraftSave,
-  readPendingDraftSave,
-  storeEditorErrors,
-  storeEditorLines,
-  storeEditorValues,
-  storePendingDraftSave,
-  type PendingDraftSave,
+  clearEditorValues, clearPendingDraftSave, readPendingDraftSave, storeEditorErrors,
+  storeEditorLines, storeEditorValues, storePendingDraftSave,
 } from './storage.js';
-
-export type SaveErrors = ReturnType<typeof splitFinalizationErrors>;
-export type SaveDraftOutcome = {
-  kind: 'saved' | 'failed' | 'uncertain' | 'auth-expired' | 'cancelled';
-  errors: SaveErrors | null;
-  message: string;
-};
-
-export type SaveCheckpoint = {
-  document: DocumentData;
-  values: DocumentValues;
-  lines: LineValues[];
-};
-
-export type SaveDraftInput = {
-  document: DocumentData | null;
-  values: DocumentValues;
-  lines: LineValues[];
-  hasLineErrors: boolean;
-  previewAmounts?: Amounts;
-  finalizeAfterSave: boolean;
-};
-
-type SavePhase =
-  | { kind: 'ready' }
-  | { kind: 'saving'; request: PendingDraftSave }
-  | { kind: 'finalizing'; document: DocumentData };
+import type { PendingDraftSave } from './storage.types.js';
 
 function signature(values: DocumentValues, lines: LineValues[]): string {
   return JSON.stringify({

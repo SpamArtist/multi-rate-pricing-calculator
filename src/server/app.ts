@@ -1,18 +1,13 @@
+import type { DatabaseCheck, AppOptions } from './app.types.js';
 import express, { type Express } from 'express';
 import { resolve } from 'node:path';
 import { checkDatabase } from '../db/client.js';
-import { createAuthRouter, requireSameOriginForCookieMutations, type SigninRateLimitOptions, type SignupRateLimitOptions } from './auth.js';
+import { createAuthRouter, requireSameOriginForCookieMutations } from './auth.js';
 import { createDocumentsRouter } from './documents.js';
 import { draftSaveHandler } from './http/draft-save.js';
 import { createReportsRouter } from './reports.js';
-import { systemClock, type Clock } from './clock.js';
-
-export type DatabaseCheck = () => Promise<void>;
-
-export interface AppOptions {
-  signupRateLimit?: SignupRateLimitOptions;
-  signinRateLimit?: SigninRateLimitOptions;
-}
+import { systemClock } from './clock.js';
+import type { Clock } from '../shared/types/clock.js';
 
 export function createApp(
   databaseCheck: DatabaseCheck = checkDatabase,

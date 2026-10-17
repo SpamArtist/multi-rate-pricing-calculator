@@ -1,3 +1,4 @@
+import type { DocumentRef, LineRef } from './finalization.test.types.js';
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { Client } from 'pg';
@@ -47,9 +48,6 @@ function jsonRequest(method: string, body?: unknown): RequestInit {
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   };
 }
-
-type DocumentRef = { id: string };
-type LineRef = { id: string };
 
 async function createDocument(client: ReturnType<typeof createApiSession>, title: string, customerName = ''): Promise<DocumentRef> {
   const response = await client.fetch(`${baseUrl}/documents`, jsonRequest('POST', {

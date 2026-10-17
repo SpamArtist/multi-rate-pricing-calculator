@@ -1,18 +1,17 @@
+import type { DocumentEditorProps } from './useDocumentEditor.types.js';
 import React from 'react';
-import type { DocumentData, User } from '../../shared/types/api-contracts.js';
+import type { DocumentData } from '../../shared/types/api-contracts.js';
 import type { FieldErrors } from '../../shared/types/field-errors.js';
 import { responseError } from '../api/client.js';
 import { localToday } from '../formatting.js';
 import { navigate, replaceRoute } from '../routing.js';
-import { documentFieldErrors, newLineValues, previewLine, previewDocumentAmounts, type DocumentValues, type EditableLineField, type LineValues } from './model.js';
-import { clearEditorErrors, clearEditorValues, readEditorLines, readEditorValues, restoreEditor, storeEditorLines, storeEditorValues } from './storage.js';
+import { documentFieldErrors, newLineValues, previewLine, previewDocumentAmounts } from './model.js';
+import type { DocumentValues, EditableLineField, LineValues } from './model.types.js';
+import {
+  clearEditorErrors, clearEditorValues, readEditorLines, readEditorValues,
+  restoreEditor, storeEditorLines, storeEditorValues,
+} from './storage.js';
 import { createDraftSaver } from './saveDraft.js';
-
-export type DocumentEditorProps = {
-  owner: User;
-  documentId?: string;
-  onAuthExpired: () => void;
-};
 
 export function useDocumentEditor({ owner, documentId: routeDocumentId, onAuthExpired }: DocumentEditorProps) {
   // The route may gain a server ID; the live editor and saver still own this session.

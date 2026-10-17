@@ -1,21 +1,8 @@
+import type { LineItemProps } from './LineItem.types.js';
 import React from 'react';
 import { PrototypeIcon } from '../PrototypeIcon.js';
 import { formatEuro } from '../formatting.js';
-import type { EditableLineField, LinePreview, LineValues } from './model.js';
-
-type LineItemProps = {
-  line: LineValues;
-  index: number;
-  preview: LinePreview;
-  errors: Partial<Record<EditableLineField, string>>;
-  submitted: boolean;
-  canEdit: boolean;
-  canMutate: boolean;
-  lineCount: number;
-  onChange: (key: string, field: EditableLineField, value: string) => void;
-  onMove: (key: string, direction: -1 | 1) => void;
-  onRemove: (key: string) => void;
-};
+import type { EditableLineField } from './model.types.js';
 
 export function LineItem({ line, index, preview, errors, submitted, canEdit, canMutate, lineCount, onChange, onMove, onRemove }: LineItemProps): React.JSX.Element {
   const field = (name: Exclude<EditableLineField, 'description'>, label: string, inputMode: 'numeric' | 'decimal'): React.JSX.Element => {

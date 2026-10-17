@@ -1,3 +1,4 @@
+import type { SummaryQuery } from './reports.types.js';
 import { and, eq, gte, lte, sql } from 'drizzle-orm';
 import { Router, type Request, type RequestHandler } from 'express';
 import { withTenantTransaction } from '../db/client.js';
@@ -5,10 +6,9 @@ import { documents } from '../db/schema.js';
 import { isCalendarDate } from '../shared/document-validation.js';
 import { MAX_SAFE_AMOUNT } from '../shared/pricing.js';
 import type { FieldErrors as Fields } from '../shared/types/field-errors.js';
-import { requireAuthenticated, type AuthenticatedResponse } from './auth.js';
-import { type Clock } from './clock.js';
-
-type SummaryQuery = { start: string; end: string };
+import { requireAuthenticated } from './auth.js';
+import type { AuthenticatedResponse } from './auth.types.js';
+import type { Clock } from '../shared/types/clock.js';
 
 function parseSummaryQuery(request: Request): { fields: Fields; values?: SummaryQuery } {
   const fields = Object.create(null) as Fields;

@@ -1,8 +1,8 @@
+import type { DraftMetadata } from './draft-save-persistence.types.js';
 import { and, eq, sql } from 'drizzle-orm';
-import type { AuthenticatedOwnerId, TenantTransaction } from './client.js';
+import type { TenantTransaction } from './client.types.js';
+import type { AuthenticatedOwnerId } from '../shared/types/authenticated-owner.js';
 import { documents, draftSaveMutations, lineItems } from './schema.js';
-
-type DraftMetadata = { title: string; customerName: string; issueDate: string };
 
 /** The unique key arbitrates concurrent retries before any draft write. */
 export async function claimDraftSaveMutation(

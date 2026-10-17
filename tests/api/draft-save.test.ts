@@ -1,3 +1,4 @@
+import type { LineInput, Document, SaveBody } from './draft-save.test.types.js';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { Client } from 'pg';
@@ -12,10 +13,6 @@ const clock = new TestClock('2026-10-14T08:00:00.000Z');
 const server = createServer(createApp(undefined, clock, { signupRateLimit: { maxRequests: 100 } }));
 const ownerIds: string[] = [];
 let baseUrl = '';
-
-type LineInput = { id?: string; description: string; quantity: number; unitPriceCents: number; discountCents: number; taxRateBasisPoints: number };
-type Document = { id: string; title: string; status: string; lineItems: Array<LineInput & { id: string; position: number; amounts: unknown }>; amounts: { totalCents: number } };
-type SaveBody = { mutationId: string; documentId?: string; title: string; customerName: string; issueDate: string; lineItems: LineInput[] };
 
 const line = (description: string, id?: string): LineInput => ({
   ...(id ? { id } : {}), description, quantity: 1, unitPriceCents: 100, discountCents: 0, taxRateBasisPoints: 0,

@@ -1,12 +1,14 @@
+import type { SignupRateLimitOptions, SigninRateLimitOptions, AuthenticatedUser, AuthenticatedHandler } from './auth.types.js';
 import { createHash, randomBytes } from 'node:crypto';
 import argon2 from 'argon2';
 import { eq, sql } from 'drizzle-orm';
 import { json, Router, type Request, type RequestHandler } from 'express';
-import { db, type AuthenticatedOwnerId } from '../db/client.js';
+import { db } from '../db/client.js';
+import type { AuthenticatedOwnerId } from '../shared/types/authenticated-owner.js';
 import { sessions, users } from '../db/schema.js';
 import { trimUnicodeWhitespace, validateRegistrationFields } from '../shared/auth-validation.js';
 import type { FieldErrors as Fields } from '../shared/types/field-errors.js';
-import { type Clock } from './clock.js';
+import type { Clock } from '../shared/types/clock.js';
 
 const SESSION_COOKIE = '__Host-session';
 const SESSION_IDLE_MS = 24 * 60 * 60 * 1000;
@@ -18,13 +20,6 @@ const ARGON2ID_OPTIONS = {
   parallelism: 1,
   hashLength: 32,
 } as const;
-
-export interface SignupRateLimitOptions {
-  maxRequests?: number;
-  windowMs?: number;
-}
-
-export type SigninRateLimitOptions = SignupRateLimitOptions;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -138,11 +133,6 @@ function readSessionToken(cookieHeader: string | undefined): string | undefined 
   return undefined;
 }
 
-interface AuthenticatedUser {
-  id: AuthenticatedOwnerId;
-  email: string;
-}
-
 /** Atomically validate and refresh one cookie session for auth and tenant routes. */
 async function resolveSession(request: Request, clock: Clock): Promise<AuthenticatedUser | undefined> {
   const token = readSessionToken(request.headers.cookie);
@@ -167,11 +157,6 @@ async function resolveSession(request: Request, clock: Clock): Promise<Authentic
   }
   return { id: user.id as AuthenticatedOwnerId, email: user.email };
 }
-
-export type AuthenticatedHandler = RequestHandler<
-  Request['params'], unknown, unknown, Request['query'], { ownerId: AuthenticatedOwnerId }
->;
-export type AuthenticatedResponse = Parameters<AuthenticatedHandler>[1];
 
 /** Refresh the cookie session before parsing tenant requests, then bind its trusted owner. */
 export function requireAuthenticated(clock: Clock): AuthenticatedHandler {

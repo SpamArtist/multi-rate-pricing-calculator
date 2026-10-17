@@ -1,3 +1,4 @@
+import type { LineItem, Document } from './document-duplication.test.types.js';
 import { createServer } from 'node:http';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { closeDatabase } from '../../src/db/client.js';
@@ -5,30 +6,6 @@ import { createApp } from '../../src/server/app.js';
 import { createApiSession } from '../support/api-session.js';
 import { deleteTestOwner, migrationPool, withOwner } from '../support/db-fixture.js';
 import { TestClock } from '../support/test-clock.js';
-
-type LineItem = {
-  id: string;
-  position: number;
-  description: string;
-  quantity: number;
-  unitPriceCents: number;
-  discountCents: number;
-  taxRateBasisPoints: number;
-  amounts: Record<string, number>;
-};
-
-type Document = {
-  id: string;
-  title: string;
-  customerName: string;
-  issueDate: string;
-  status: string;
-  createdAt: string;
-  updatedAt: string;
-  finalizedAt: string | null;
-  lineItems: LineItem[];
-  amounts: Record<string, number>;
-};
 
 const clock = new TestClock('2026-10-14T08:00:00.000Z');
 const server = createServer(createApp(undefined, clock, { signupRateLimit: { maxRequests: 100 } }));

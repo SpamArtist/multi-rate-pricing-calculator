@@ -1,9 +1,8 @@
+import type { DraftLineInput } from '../shared/types/draft-line.js';
 import { and, eq, sql } from 'drizzle-orm';
-import type { TenantTransaction } from './client.js';
+import type { TenantTransaction } from './client.types.js';
 import { lineItems } from './schema.js';
-import type { ExactAmounts, LinePricingInput } from '../shared/types/pricing.js';
-
-export type DraftLineInput = LinePricingInput & { id?: string; description: string };
+import type { ExactAmounts } from '../shared/types/pricing.js';
 
 /** The caller holds the document lock and has validated every supplied line ID. */
 export async function replaceDraftLines(

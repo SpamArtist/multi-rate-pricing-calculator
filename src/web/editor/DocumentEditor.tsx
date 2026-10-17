@@ -3,7 +3,8 @@ import { PrototypeIcon } from '../PrototypeIcon.js';
 import { formatDate, formatEuro } from '../formatting.js';
 import { navigate } from '../routing.js';
 import { LineItem } from './LineItem.js';
-import { useDocumentEditor, type DocumentEditorProps } from './useDocumentEditor.js';
+import { useDocumentEditor } from './useDocumentEditor.js';
+import type { DocumentEditorProps } from './useDocumentEditor.types.js';
 
 export function DocumentEditor(props: DocumentEditorProps): React.JSX.Element {
   const {

@@ -1,13 +1,9 @@
-import type { DocumentData, DraftSaveBody } from '../../shared/types/api-contracts.js';
-import { lineValuesFromDocument, type DocumentValues, type LineValues, type PersistedEditorErrors } from './model.js';
+import type { PendingDraftSave } from './storage.types.js';
+import type { DocumentData } from '../../shared/types/api-contracts.js';
+import { lineValuesFromDocument } from './model.js';
+import type { DocumentValues, LineValues, PersistedEditorErrors } from './model.types.js';
 
 const EDITOR_STORAGE_PREFIX = 'pricing-calculator:editor:';
-
-export type PendingDraftSave = {
-  body: DraftSaveBody;
-  lineKeys: string[];
-  signature: string;
-};
 
 function pendingSaveKey(ownerId: string, documentId?: string): string {
   return `${EDITOR_STORAGE_PREFIX}${ownerId}:${documentId ?? 'new'}:pending-save`;

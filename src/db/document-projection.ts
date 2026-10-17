@@ -1,11 +1,9 @@
+import type { DocumentRow, LineRow } from './document-projection.types.js';
 import { asc, eq, inArray } from 'drizzle-orm';
-import { documents, lineItems } from './schema.js';
-import type { TenantTransaction } from './client.js';
+import { lineItems } from './schema.js';
+import type { TenantTransaction } from './client.types.js';
 import { calculatePricing, MAX_SAFE_AMOUNT } from '../shared/pricing.js';
 import type { ExactAmounts, LinePricingInput } from '../shared/types/pricing.js';
-
-type DocumentRow = typeof documents.$inferSelect;
-type LineRow = typeof lineItems.$inferSelect;
 
 export function databaseLineInput(line: LineRow): LinePricingInput & { description: string } {
   return {

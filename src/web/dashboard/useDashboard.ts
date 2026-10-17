@@ -1,15 +1,7 @@
+import type { DashboardFilters } from './useDashboard.types.js';
 import React from 'react';
 import type { DocumentSummary } from '../../shared/types/api-contracts.js';
 import { responseError } from '../api/client.js';
-
-export type DashboardFilters = {
-  search: string;
-  status: 'all' | 'draft' | 'finalized';
-  issueDateStart: string;
-  issueDateEnd: string;
-  sort: 'desc' | 'asc';
-  page: number;
-};
 
 export function useDashboard(userId: string, onAuthExpired: () => void) {
   const [items, setItems] = React.useState<DocumentSummary[]>([]);

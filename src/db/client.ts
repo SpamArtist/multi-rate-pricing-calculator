@@ -1,19 +1,15 @@
-import { ExtractTablesWithRelations, sql } from 'drizzle-orm';
+import type { TenantOperation, TenantTransactionOptions } from './client.types.js';
+import type { AuthenticatedOwnerId } from '../shared/types/authenticated-owner.js';
+import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import type { NodePgTransaction } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import { documents, draftSaveMutations, lineItems, sessions, users } from './schema.js';
 
 const connectionString = process.env.DATABASE_URL
   ?? 'postgres://pricing_runtime:pricing_runtime@127.0.0.1:5432/pricing';
 const pool = new Pool({ connectionString });
-const schema = { users, sessions, documents, lineItems, draftSaveMutations };
+export const schema = { users, sessions, documents, lineItems, draftSaveMutations };
 export const db = drizzle(pool, { schema });
-
-export type AuthenticatedOwnerId = string & { readonly __authenticatedOwnerId: true };
-export type TenantTransaction = NodePgTransaction<typeof schema, ExtractTablesWithRelations<typeof schema>>;
-export type TenantOperation<T> = (transaction: TenantTransaction) => Promise<T>;
-type TenantTransactionOptions = { consistentRead?: boolean };
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 

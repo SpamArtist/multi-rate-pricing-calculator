@@ -1,10 +1,7 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
-import {
-  closeDatabase,
-  withTenantTransaction,
-  type AuthenticatedOwnerId,
-} from '../../src/db/client.js';
+import { closeDatabase, withTenantTransaction } from '../../src/db/client.js';
+import type { AuthenticatedOwnerId } from '../../src/shared/types/authenticated-owner.js';
 import { documents } from '../../src/db/schema.js';
 import {
   createTestOwner,

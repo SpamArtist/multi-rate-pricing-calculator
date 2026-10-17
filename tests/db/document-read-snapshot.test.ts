@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
-import { closeDatabase, withTenantTransaction, type AuthenticatedOwnerId } from '../../src/db/client.js';
+import { closeDatabase, withTenantTransaction } from '../../src/db/client.js';
+import type { AuthenticatedOwnerId } from '../../src/shared/types/authenticated-owner.js';
 import { documents } from '../../src/db/schema.js';
 import { projectDocumentSummaries, serializeDocument } from '../../src/db/document-projection.js';
 import { createTestOwner, deleteTestOwner, migrationPool, testOwnerId, testPool, withOwner } from '../support/db-fixture.js';

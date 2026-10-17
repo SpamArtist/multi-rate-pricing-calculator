@@ -1,3 +1,4 @@
+import type { Line, Detail } from './line-item-mutations.test.types.js';
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -46,9 +47,6 @@ function jsonRequest(method: string, body?: unknown): RequestInit {
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   };
 }
-
-type Line = { id: string; position: number; description: string; quantity: number; unitPriceCents: number; discountCents: number; taxRateBasisPoints: number };
-type Detail = { id: string; lineItems: Line[]; amounts: Record<string, number> };
 
 describe('draft line mutations', () => {
   beforeAll(async () => { baseUrl = await listen(); });

@@ -1,21 +1,14 @@
+import type { DraftSaveInput } from './draft-save.types.js';
 import { createHash } from 'node:crypto';
-import { withTenantTransaction, type AuthenticatedOwnerId } from '../db/client.js';
+import { withTenantTransaction } from '../db/client.js';
+import type { AuthenticatedOwnerId } from '../shared/types/authenticated-owner.js';
 import { serializeDocument } from '../db/document-projection.js';
 import {
   claimDraftSaveMutation, createDraft, draftLineIds, findDraftSaveMutation, lockDraft,
   recordDraftSaveResponse, updateDraft,
 } from '../db/draft-save-persistence.js';
-import { replaceDraftLines, type DraftLineInput } from '../db/line-set-persistence.js';
-import type { Clock } from './clock.js';
-
-export type DraftSaveInput = {
-  mutationId: string;
-  documentId?: string;
-  title: string;
-  customerName: string;
-  issueDate: string;
-  lineItems: DraftLineInput[];
-};
+import { replaceDraftLines } from '../db/line-set-persistence.js';
+import type { Clock } from '../shared/types/clock.js';
 
 class MissingDraft extends Error {}
 class FinalizedDraft extends Error {}

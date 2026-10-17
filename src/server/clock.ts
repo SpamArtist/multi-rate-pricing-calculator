@@ -1,6 +1,5 @@
-export interface Clock {
-  now(): Date;
-}
+import type { Clock } from '../shared/types/clock.js';
+
 
 export const systemClock: Clock = {
   now: () => new Date(),

@@ -4,7 +4,8 @@ import { formatDate, formatEuro } from '../formatting.js';
 import { PrototypeIcon } from '../PrototypeIcon.js';
 import { navigate } from '../routing.js';
 import { SummaryReport } from './SummaryReport.js';
-import { useDashboard, type DashboardFilters } from './useDashboard.js';
+import { useDashboard } from './useDashboard.js';
+import type { DashboardFilters } from './useDashboard.types.js';
 
 export function Dashboard({ user, onAuthExpired }: { user: User; onAuthExpired: () => void }): React.JSX.Element {
   const { items, totalItems, totalPages, filters, loading, error, updateFilters, resetFilters, setPage, movePage, hasActiveFilters, visiblePageNumbers } = useDashboard(user.id, onAuthExpired);

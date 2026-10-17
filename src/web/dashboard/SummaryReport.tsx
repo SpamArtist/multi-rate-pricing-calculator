@@ -1,13 +1,7 @@
+import type { SummaryReportProps } from './SummaryReport.types.js';
 import React from 'react';
 import { formatEuro } from '../formatting.js';
 import { useSummaryReport } from './useSummaryReport.js';
-
-type SummaryReportProps = {
-  userId: string;
-  reportOpen: boolean;
-  onClose: () => void;
-  onAuthExpired: () => void;
-};
 
 export function SummaryReport({ userId, reportOpen, onClose, onAuthExpired }: SummaryReportProps): React.JSX.Element {
   const { reportRange, updateReportRange, reportLoading, reportError, reportRangeError, currentReport } = useSummaryReport(userId, reportOpen, onAuthExpired);

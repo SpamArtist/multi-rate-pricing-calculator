@@ -1,31 +1,31 @@
+import type {
+  CompleteLineInput, DocumentFields, DocumentListQuery, DocumentListSort,
+  DocumentListStatus, DraftLineMutation, ParsedLineValues,
+} from './documents.types.js';
 import { and, asc, count, desc, eq, gte, ilike, lte, sql } from 'drizzle-orm';
 import { json, Router, type Request, type RequestHandler } from 'express';
-import { requireAuthenticated, type AuthenticatedResponse } from './auth.js';
+import { requireAuthenticated } from './auth.js';
+import type { AuthenticatedResponse } from './auth.types.js';
 import { documents, lineItems } from '../db/schema.js';
-import { withTenantTransaction, type TenantTransaction } from '../db/client.js';
+import { withTenantTransaction } from '../db/client.js';
+import type { TenantTransaction } from '../db/client.types.js';
 import { isCalendarDate } from '../shared/document-validation.js';
 import { containsControlCharacters } from '../shared/text-validation.js';
 import type { FieldErrors as Fields } from '../shared/types/field-errors.js';
-import type { LinePricingInput } from '../shared/types/pricing.js';
 import {
   amountsWithinSafeRange,
   calculatePricing,
   MAX_SAFE_AMOUNT,
 } from '../shared/pricing.js';
 import { databaseLineInput, projectDocumentSummaries, serializeDocument, serializeLineItem } from '../db/document-projection.js';
-import { type Clock } from './clock.js';
-import { replaceDraftLines, writeLineSnapshots, type DraftLineInput } from '../db/line-set-persistence.js';
+import type { Clock } from '../shared/types/clock.js';
+import { replaceDraftLines, writeLineSnapshots } from '../db/line-set-persistence.js';
+import type { DraftLineInput } from '../shared/types/draft-line.js';
 import {
   fields as createFields, inputError, isRecord, linePricingErrors, MAX_DATABASE_INTEGER,
   parseAmount, parseCustomerName, parseDescription, parseIssueDate, parsePosition, parseQuantity,
   parseTaxRate, parseTitle, parseUuid, rejectUnknownFields,
 } from './document-input.js';
-
-type DocumentFields = {
-  title: string;
-  customerName: string;
-  issueDate: string;
-};
 
 const DOCUMENT_PAGE_SIZE = 25;
 const DOCUMENT_LIST_QUERY_FIELDS = ['search', 'status', 'issueDateStart', 'issueDateEnd', 'sort', 'page'] as const;
@@ -109,32 +109,6 @@ function parseDocumentListQuery(request: Request): { fields: Fields; values?: Do
     },
   };
 }
-
-type DocumentListStatus = 'all' | 'draft' | 'finalized';
-type DocumentListSort = 'desc' | 'asc';
-type DocumentListQuery = {
-  search: string;
-  status: DocumentListStatus;
-  issueDateStart?: string;
-  issueDateEnd?: string;
-  sort: DocumentListSort;
-  page: number;
-};
-
-type ParsedLineValues = Partial<{
-  description: string;
-  quantity: bigint;
-  unitPriceCents: bigint;
-  discountCents: bigint;
-  taxRateBasisPoints: number;
-  position: number;
-}>;
-
-type CompleteLineInput = LinePricingInput & { description: string };
-type DraftLineMutation =
-  | { kind: 'missing' }
-  | { kind: 'finalized' }
-  | { kind: 'draft'; documentId: string; lines: (DraftLineInput & { id: string })[] };
 
 function parseFields(body: unknown, allowed: readonly string[], required: readonly string[] = []): { fields: Fields; values?: Partial<DocumentFields> } {
   const fields = createFields();

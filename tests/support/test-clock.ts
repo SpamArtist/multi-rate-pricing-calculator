@@ -1,4 +1,4 @@
-import type { Clock } from '../../src/server/clock.js';
+import type { Clock } from '../../src/shared/types/clock.js';
 
 export class TestClock implements Clock {
   private current: Date;

@@ -1,6 +1,6 @@
+import type { Route } from './routing.types.js';
 import React from 'react';
 
-type Route = { kind: 'dashboard' } | { kind: 'new' } | { kind: 'document'; id: string };
 const ROUTE_REPLACED = 'pricing:route-replaced';
 
 function routeFromHash(): Route {

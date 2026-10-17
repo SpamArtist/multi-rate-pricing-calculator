@@ -19,11 +19,14 @@ export default tseslint.config(
   },
   {
     files: ['src/**/*.{js,mjs,cjs,ts,tsx,mts,cts}'],
-    plugins: { local: { rules: { 'no-inline-types': noInlineTypes } } },
     rules: {
       'max-lines': ['error', 1000],
-      'local/no-inline-types': 'error',
     },
+  },
+  {
+    files: ['{src,tests}/**/*.{ts,tsx}'],
+    plugins: { local: { rules: { 'no-inline-types': noInlineTypes } } },
+    rules: { 'local/no-inline-types': 'error' },
   },
   {
     files: ['src/server/http/**/*.{js,mjs,cjs,ts,tsx,mts,cts}'],

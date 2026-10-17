@@ -1,3 +1,4 @@
+import type { RegistrationValues, AuthMode, AuthOperation, AuthSession } from './useAuth.types.js';
 import React from 'react';
 import { validateRegistrationFields } from '../../shared/auth-validation.js';
 import type { User } from '../../shared/types/api-contracts.js';
@@ -5,11 +6,6 @@ import type { FieldErrors } from '../../shared/types/field-errors.js';
 import { responseError } from '../api/client.js';
 import { clearUserEditorValues } from '../editor/storage.js';
 import { navigate } from '../routing.js';
-
-type RegistrationValues = { email: string; password: string };
-type AuthMode = 'sign-in' | 'sign-up';
-type AuthOperation = AuthMode | 'sign-out';
-type AuthSession = { user: User | null; generation: number };
 
 export function useAuth() {
   const [session, setSession] = React.useState<AuthSession>({ user: null, generation: 0 });
