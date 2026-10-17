@@ -1,5 +1,5 @@
 import type { DocumentRow, LineRow } from './document-projection.types.js';
-import { asc, eq, inArray } from 'drizzle-orm';
+import { asc, eq } from 'drizzle-orm';
 import { lineItems } from './schema.js';
 import type { TenantTransaction } from './client.types.js';
 import { calculatePricing, MAX_SAFE_AMOUNT } from '../shared/pricing.js';
@@ -42,6 +42,16 @@ function documentSnapshot(row: DocumentRow): ExactAmounts {
     taxableCents: row.finalizedTaxableCents,
     taxCents: row.finalizedTaxCents,
     totalCents: row.finalizedTotalCents,
+  };
+}
+
+function draftAmounts(row: DocumentRow): ExactAmounts {
+  return {
+    subtotalCents: row.draftSubtotalCents,
+    discountCents: row.draftDiscountCents,
+    taxableCents: row.draftTaxableCents,
+    taxCents: row.draftTaxCents,
+    totalCents: row.draftTotalCents,
   };
 }
 
@@ -95,16 +105,7 @@ export async function serializeDocument(transaction: TenantTransaction, row: Doc
   };
 }
 
-export async function projectDocumentSummaries(transaction: TenantTransaction, rows: DocumentRow[]): Promise<DocumentSummary[]> {
-  const draftIds = rows.filter(row => row.status === 'draft').map(row => row.id);
-  const draftLines = draftIds.length === 0 ? [] : await transaction.select().from(lineItems)
-    .where(inArray(lineItems.documentId, draftIds));
-  const linesByDocument = new Map<string, LineRow[]>();
-  for (const line of draftLines) {
-    const lines = linesByDocument.get(line.documentId) ?? [];
-    lines.push(line);
-    linesByDocument.set(line.documentId, lines);
-  }
+export function projectDocumentSummaries(rows: DocumentRow[]): DocumentSummary[] {
   return rows.map(row => ({
     id: row.id,
     title: row.title,
@@ -113,6 +114,6 @@ export async function projectDocumentSummaries(transaction: TenantTransaction, r
     status: row.status as DocumentSummary['status'],
     amounts: jsonAmounts(row.status === 'finalized'
       ? documentSnapshot(row)
-      : calculatePricing((linesByDocument.get(row.id) ?? []).map(databaseLineInput)).amounts),
+      : draftAmounts(row)),
   }));
 }

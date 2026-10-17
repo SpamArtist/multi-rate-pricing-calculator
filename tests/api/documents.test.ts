@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { Client } from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -6,6 +7,7 @@ import { createApp } from '../../src/server/app.js';
 import { createApiSession } from '../support/api-session.js';
 import { deleteTestOwner, migrationPool, withOwner } from '../support/db-fixture.js';
 import { TestClock } from '../support/test-clock.js';
+import type { Amounts, DocumentData } from '../../src/shared/types/api-contracts.js';
 import type { DocumentListResponse } from '../../src/shared/types/document-list.js';
 
 const clock = new TestClock('2026-10-14T08:00:00.000Z');
@@ -199,7 +201,10 @@ describe('document drafts', () => {
     const list = await client.fetch(`${baseUrl}/documents`);
     expect(list.status).toBe(200);
     expect(await list.json()).toMatchObject({
-      items: [expect.objectContaining({ id: document.id, title: 'Brand workshop', issueDate: '2026-10-14' })],
+      items: [expect.objectContaining({
+        id: document.id, title: 'Brand workshop', issueDate: '2026-10-14',
+        amounts: { subtotalCents: 0, discountCents: 0, taxableCents: 0, taxCents: 0, totalCents: 0 },
+      })],
       page: 1,
       pageSize: 25,
       totalItems: 1,
@@ -328,9 +333,69 @@ describe('document drafts', () => {
     const beyond = await beyondResponse.json() as { items: unknown[]; page: number; pageSize: number; totalItems: number; totalPages: number };
     expect(beyond).toEqual({ items: [], page: 3, pageSize: 25, totalItems: 26, totalPages: 2, firstCursor: null, lastCursor: null });
 
-    expect(await countedLineFetches(`${baseUrl}/documents?search=acme`, client)).toBe(1);
-    expect(await countedLineFetches(`${baseUrl}/documents?search=acme&page=2`, client)).toBe(1);
+    expect(await countedLineFetches(`${baseUrl}/documents?search=acme`, client)).toBe(0);
+    expect(await countedLineFetches(`${baseUrl}/documents?search=acme&page=2`, client)).toBe(0);
     expect(await countedLineFetches(`${baseUrl}/documents?search=acme&page=3`, client)).toBe(0);
+  });
+
+  it('lists exact draft amounts after atomic saves and legacy line changes without loading lines', async () => {
+    const { client } = await signedInClient('documents-list-stored-draft-amounts@example.com');
+    const firstLine = {
+      description: 'Consulting', quantity: 2, unitPriceCents: 1000, discountCents: 100, taxRateBasisPoints: 1000,
+    };
+    const secondLine = {
+      description: 'Materials', quantity: 1, unitPriceCents: 500, discountCents: 0, taxRateBasisPoints: 0,
+    };
+    const save = async (lineItems: Array<typeof firstLine & { id?: string }>, documentId?: string): Promise<DocumentData> => {
+      const response = await client.fetch(`${baseUrl}/documents/draft-save`, jsonRequest('POST', {
+        mutationId: randomUUID(), ...(documentId ? { documentId } : {}),
+        title: 'Stored draft amounts', customerName: 'Amount customer', issueDate: '2026-10-14', lineItems,
+      }));
+      expect(response.status).toBe(documentId ? 200 : 201);
+      return response.json() as Promise<DocumentData>;
+    };
+    const expectListedAmounts = async (documentId: string, expected: Amounts): Promise<void> => {
+      const response = await client.fetch(`${baseUrl}/documents?search=Amount%20customer`);
+      expect(response.status).toBe(200);
+      const list = await response.json() as DocumentListResponse;
+      expect(list.items.find(item => item.id === documentId)?.amounts).toEqual(expected);
+    };
+
+    const created = await save([firstLine, secondLine]);
+    await expectListedAmounts(created.id, {
+      subtotalCents: 2500, discountCents: 100, taxableCents: 2400, taxCents: 190, totalCents: 2590,
+    });
+
+    const updated = await save([
+      { ...firstLine, id: created.lineItems[0].id, quantity: 3 },
+      { ...secondLine, id: created.lineItems[1].id },
+    ], created.id);
+    await expectListedAmounts(created.id, {
+      subtotalCents: 3500, discountCents: 100, taxableCents: 3400, taxCents: 290, totalCents: 3690,
+    });
+
+    const route = `${baseUrl}/documents/${created.id}/line-items`;
+    const inserted = await client.fetch(route, jsonRequest('POST', {
+      description: 'Delivery', quantity: 1, unitPriceCents: 200, discountCents: 50, taxRateBasisPoints: 1000,
+    }));
+    expect(inserted.status).toBe(201);
+    const added = await inserted.json() as { id: string };
+    await expectListedAmounts(created.id, {
+      subtotalCents: 3700, discountCents: 150, taxableCents: 3550, taxCents: 305, totalCents: 3855,
+    });
+
+    const edited = await client.fetch(`${route}/${added.id}`, jsonRequest('PATCH', { unitPriceCents: 400 }));
+    expect(edited.status).toBe(200);
+    await expectListedAmounts(created.id, {
+      subtotalCents: 3900, discountCents: 150, taxableCents: 3750, taxCents: 325, totalCents: 4075,
+    });
+
+    const removed = await client.fetch(`${route}/${updated.lineItems[1].id}`, jsonRequest('DELETE'));
+    expect(removed.status).toBe(204);
+    await expectListedAmounts(created.id, {
+      subtotalCents: 3400, discountCents: 150, taxableCents: 3250, taxCents: 325, totalCents: 3575,
+    });
+    expect(await countedLineFetches(`${baseUrl}/documents?search=Amount%20customer`, client)).toBe(0);
   });
 
   it('seeks across pages and reopens visited pages with stable date and UUID ordering', async () => {

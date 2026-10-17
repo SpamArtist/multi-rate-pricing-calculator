@@ -9,6 +9,7 @@ import {
 } from '../db/draft-save-persistence.js';
 import { replaceDraftLines } from '../db/line-set-persistence.js';
 import type { Clock } from '../shared/types/clock.js';
+import { calculatePricing } from '../shared/pricing.js';
 
 class MissingDraft extends Error {}
 class FinalizedDraft extends Error {}
@@ -54,7 +55,8 @@ export async function saveDraft(ownerId: AuthenticatedOwnerId, values: DraftSave
       if (values.lineItems.some(line => line.id && !existingIds.has(line.id))) throw new MissingDraft();
 
       await replaceDraftLines(transaction, row.id, values.lineItems);
-      const updated = await updateDraft(transaction, row.id, values, clock.now());
+      const amounts = calculatePricing(values.lineItems).amounts;
+      const updated = await updateDraft(transaction, row.id, values, amounts, clock.now());
       const document = await serializeDocument(transaction, updated);
       await recordDraftSaveResponse(transaction, ownerId, values.mutationId, document);
       return { kind: values.documentId ? 'updated' as const : 'created' as const, document };

@@ -36,6 +36,13 @@
       "when": 1791936004000,
       "tag": "0004_document_listing_index",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1791936005000,
+      "tag": "0005_draft_document_amounts",
+      "breakpoints": true
     }
   ]
 }

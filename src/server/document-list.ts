@@ -10,7 +10,7 @@ export async function listDocuments(ownerId: AuthenticatedOwnerId, query: Docume
   return withTenantTransaction(ownerId, async transaction => {
     const totalItems = query.includeTotal ? await countDocumentsForList(transaction, query) : undefined;
     const rows = await readDocumentListPage(transaction, query, totalItems, DOCUMENT_PAGE_SIZE);
-    const items = await projectDocumentSummaries(transaction, rows);
+    const items = projectDocumentSummaries(rows);
     const cursorFor = (item: typeof items[number]): string => `${item.issueDate}:${item.id}`;
     return {
       items, page: query.page, pageSize: DOCUMENT_PAGE_SIZE,

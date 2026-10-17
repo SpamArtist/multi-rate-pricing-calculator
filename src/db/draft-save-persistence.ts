@@ -2,6 +2,7 @@ import type { DraftMetadata } from './draft-save-persistence.types.js';
 import { and, eq, sql } from 'drizzle-orm';
 import type { TenantTransaction } from './client.types.js';
 import type { AuthenticatedOwnerId } from '../shared/types/authenticated-owner.js';
+import type { ExactAmounts } from '../shared/types/pricing.js';
 import { documents, draftSaveMutations, lineItems } from './schema.js';
 
 /** The unique key arbitrates concurrent retries before any draft write. */
@@ -53,10 +54,13 @@ export async function draftLineIds(transaction: TenantTransaction, documentId: s
 }
 
 export async function updateDraft(
-  transaction: TenantTransaction, documentId: string, metadata: DraftMetadata, updatedAt: Date,
+  transaction: TenantTransaction, documentId: string, metadata: DraftMetadata, amounts: ExactAmounts, updatedAt: Date,
 ) {
   await transaction.update(documents).set({
     title: metadata.title, customerName: metadata.customerName, issueDate: metadata.issueDate, updatedAt,
+    draftSubtotalCents: amounts.subtotalCents, draftDiscountCents: amounts.discountCents,
+    draftTaxableCents: amounts.taxableCents, draftTaxCents: amounts.taxCents,
+    draftTotalCents: amounts.totalCents,
   }).where(eq(documents.id, documentId));
   const [updated] = await transaction.select().from(documents).where(eq(documents.id, documentId)).limit(1);
   if (!updated) throw new Error('Updated draft is missing.');

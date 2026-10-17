@@ -158,6 +158,26 @@ async function insertBatch(client: pg.Client, ownerId: string, batch: SeedDocume
         CASE WHEN finalized THEN taxable_cents + tax_cents END
       FROM totaled
     `, [JSON.stringify(lines)]);
+    const draftIds = batch.filter(doc => !doc.finalized).map(doc => ids.get(doc.title));
+    if (draftIds.length > 0) {
+      await client.query(`
+        UPDATE documents AS target SET
+          draft_subtotal_cents = totals.subtotal_cents,
+          draft_discount_cents = totals.discount_cents,
+          draft_taxable_cents = totals.taxable_cents,
+          draft_tax_cents = totals.tax_cents,
+          draft_total_cents = totals.taxable_cents + totals.tax_cents
+        FROM (
+          SELECT document_id,
+            sum(quantity * unit_price_cents) AS subtotal_cents,
+            sum(discount_cents) AS discount_cents,
+            sum(quantity * unit_price_cents - discount_cents) AS taxable_cents,
+            sum(((quantity * unit_price_cents - discount_cents) * tax_rate_basis_points + 5000) / 10000) AS tax_cents
+          FROM line_items WHERE document_id = ANY($1::uuid[]) GROUP BY document_id
+        ) AS totals
+        WHERE target.id = totals.document_id
+      `, [draftIds]);
+    }
     const finalizedIds = batch.filter(doc => doc.finalized).map(doc => ids.get(doc.title));
     if (finalizedIds.length > 0) {
       await client.query(`

@@ -16,6 +16,7 @@ import {
   MAX_SAFE_AMOUNT,
 } from '../shared/pricing.js';
 import { databaseLineInput, serializeDocument, serializeLineItem } from '../db/document-projection.js';
+import { readDraftLineInputs, writeDraftAmounts } from '../db/draft-amount-persistence.js';
 import { listDocumentsHandler } from './http/document-list.js';
 import type { Clock } from '../shared/types/clock.js';
 import { replaceDraftLines, writeLineSnapshots } from '../db/line-set-persistence.js';
@@ -352,6 +353,9 @@ export function createDocumentsRouter(clock: Clock): Router {
         const [copy] = await transaction.select().from(documents)
           .where(eq(documents.id, copyId))
           .limit(1);
+        const copiedPricing = calculatePricing(await readDraftLineInputs(transaction, copyId));
+        if (!copiedPricing.withinSafeRange) throw new RangeError('Copied draft amounts exceed the safe integer range.');
+        await writeDraftAmounts(transaction, copyId, copiedPricing.amounts);
         return serializeDocument(transaction, copy);
       });
       if (!duplicate) {
@@ -515,7 +519,7 @@ export function createDocumentsRouter(clock: Clock): Router {
         const [created] = await transaction.select().from(lineItems)
           .where(and(eq(lineItems.documentId, locked.documentId), eq(lineItems.position, requestedPosition)))
           .limit(1);
-        await transaction.update(documents).set({ updatedAt: clock.now() }).where(eq(documents.id, locked.documentId));
+        await writeDraftAmounts(transaction, locked.documentId, pricing.amounts, clock.now());
         return { kind: 'created' as const, line: created };
       });
 
@@ -569,7 +573,7 @@ export function createDocumentsRouter(clock: Clock): Router {
         if (Object.keys(inputErrors).length > 0) return { kind: 'invalid' as const, fields: inputErrors };
 
         await replaceDraftLines(transaction, locked.documentId, intended);
-        await transaction.update(documents).set({ updatedAt: clock.now() }).where(eq(documents.id, locked.documentId));
+        await writeDraftAmounts(transaction, locked.documentId, pricing.amounts, clock.now());
         const [updated] = await transaction.select().from(lineItems).where(eq(lineItems.id, current.id)).limit(1);
         return { kind: 'updated' as const, line: updated };
       });
@@ -604,8 +608,9 @@ export function createDocumentsRouter(clock: Clock): Router {
         const current = locked.lines.find(line => line.id === lineItemId);
         if (!current) return { kind: 'line_missing' as const };
 
-        await replaceDraftLines(transaction, locked.documentId, locked.lines.filter(line => line.id !== current.id));
-        await transaction.update(documents).set({ updatedAt: clock.now() }).where(eq(documents.id, locked.documentId));
+        const remaining = locked.lines.filter(line => line.id !== current.id);
+        await replaceDraftLines(transaction, locked.documentId, remaining);
+        await writeDraftAmounts(transaction, locked.documentId, calculatePricing(remaining).amounts, clock.now());
         return { kind: 'deleted' as const };
       });
 

@@ -48,6 +48,11 @@ export const documents = pgTable('documents', {
   status: text('status').default('draft').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).defaultNow().notNull(),
+  draftSubtotalCents: bigint('draft_subtotal_cents', { mode: 'bigint' }).default(0n).notNull(),
+  draftDiscountCents: bigint('draft_discount_cents', { mode: 'bigint' }).default(0n).notNull(),
+  draftTaxableCents: bigint('draft_taxable_cents', { mode: 'bigint' }).default(0n).notNull(),
+  draftTaxCents: bigint('draft_tax_cents', { mode: 'bigint' }).default(0n).notNull(),
+  draftTotalCents: bigint('draft_total_cents', { mode: 'bigint' }).default(0n).notNull(),
   finalizedAt: timestamp('finalized_at', { withTimezone: true, mode: 'date' }),
   finalizedSubtotalCents: bigint('finalized_subtotal_cents', { mode: 'bigint' }),
   finalizedDiscountCents: bigint('finalized_discount_cents', { mode: 'bigint' }),
@@ -58,6 +63,17 @@ export const documents = pgTable('documents', {
   index('documents_owner_issue_date_desc_id_idx').on(table.ownerId, table.issueDate.desc(), table.id.asc()),
   check('documents_title_nonblank', sql`btrim(${table.title}) <> ''`),
   check('documents_status_valid', sql`${table.status} IN ('draft', 'finalized')`),
+  check('documents_draft_amounts_safe', sql`
+    ${table.draftSubtotalCents} BETWEEN 0 AND 9007199254740991
+    AND ${table.draftDiscountCents} BETWEEN 0 AND 9007199254740991
+    AND ${table.draftTaxableCents} BETWEEN 0 AND 9007199254740991
+    AND ${table.draftTaxCents} BETWEEN 0 AND 9007199254740991
+    AND ${table.draftTotalCents} BETWEEN 0 AND 9007199254740991
+  `),
+  check('documents_draft_amounts_consistent', sql`
+    ${table.draftSubtotalCents}::numeric = ${table.draftDiscountCents}::numeric + ${table.draftTaxableCents}::numeric
+    AND ${table.draftTotalCents}::numeric = ${table.draftTaxableCents}::numeric + ${table.draftTaxCents}::numeric
+  `),
   check('documents_finalization_complete', sql`
     (${table.status} = 'draft' AND ${table.finalizedAt} IS NULL
       AND ${table.finalizedSubtotalCents} IS NULL AND ${table.finalizedDiscountCents} IS NULL

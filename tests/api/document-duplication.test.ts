@@ -6,6 +6,7 @@ import { createApp } from '../../src/server/app.js';
 import { createApiSession } from '../support/api-session.js';
 import { deleteTestOwner, migrationPool, withOwner } from '../support/db-fixture.js';
 import { TestClock } from '../support/test-clock.js';
+import type { DocumentListResponse } from '../../src/shared/types/document-list.js';
 
 const clock = new TestClock('2026-10-14T08:00:00.000Z');
 const server = createServer(createApp(undefined, clock, { signupRateLimit: { maxRequests: 100 } }));
@@ -202,6 +203,14 @@ describe('document duplication', () => {
     expect(finalizedCopy.amounts.totalCents).not.toBe(finalizedBeforeCopy.amounts.totalCents);
     expect(await (await client.fetch(`${baseUrl}/documents/${created.id}`)).json()).toEqual(finalizedBeforeCopy);
     await expectNoSnapshots(session.user.id, finalizedCopy.id);
+
+    const listResponse = await client.fetch(`${baseUrl}/documents`);
+    expect(listResponse.status).toBe(200);
+    const listed = await listResponse.json() as DocumentListResponse;
+    const listedById = new Map(listed.items.map(item => [item.id, item]));
+    expect(listedById.get(draftCopy.id)).toMatchObject({ status: 'draft', amounts: { totalCents: 6484 } });
+    expect(listedById.get(created.id)).toMatchObject({ status: 'finalized', amounts: { totalCents: 6484 } });
+    expect(listedById.get(finalizedCopy.id)).toMatchObject({ status: 'draft', amounts: { totalCents: 6446 } });
   });
 
   it('rejects missing or invalid dates, unknown fields, and foreign or missing IDs without copying', async () => {
