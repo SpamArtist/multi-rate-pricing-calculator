@@ -39,6 +39,10 @@ The tax amount calculated from a taxable line amount and that line's tax percent
 **Line total**:
 The taxable line amount plus its line tax.
 
+**Document total**:
+The sum of a document's priced line totals from its saved line items. It changes when a draft is saved and becomes fixed at finalization.
+_Avoid_: Summary
+
 **Draft**:
 A document that its owner can still change, even while incomplete.
 
