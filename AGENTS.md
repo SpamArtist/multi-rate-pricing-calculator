@@ -25,6 +25,10 @@ Write generated test output to ignored `test-results/` or `.artifacts/`. See `CO
 
 For issue verification and check documentation, see `docs/agents/verification-records.md`.
 
+## Backend architecture
+
+Before changing `src/server/` or `src/db/`, read `docs/agents/backend-architecture.md` for the HTTP, use-case, persistence, and tenant-transaction seams.
+
 ## Agent skills
 
 ### Issue tracker
