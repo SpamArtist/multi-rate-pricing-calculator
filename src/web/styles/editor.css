@@ -353,7 +353,33 @@
   gap: 0.55rem;
 }
 
-@media (width >= 48rem) {
+@media (width >= 48rem) and (width < 64rem) {
+  .breakdown {
+    gap: 0.5rem clamp(0.75rem, 1.5vw, 1.25rem);
+  }
+
+  .breakdown .section-heading {
+    margin-block-end: 0.25rem;
+  }
+
+  .amount-list {
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: clamp(0.5rem, 1vw, 0.875rem);
+  }
+
+  .amount-list > div {
+    flex-direction: row;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .amount-list dt,
+  .amount-list dd {
+    white-space: nowrap;
+  }
+
   .document-save-actions {
     grid-column: 1 / -1;
     flex-direction: row;
@@ -417,6 +443,57 @@
   }
 }
 
+@media (width >= 64rem) {
+  .breakdown {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 0.5rem clamp(0.75rem, 1.5vw, 1.25rem);
+    padding-block: 0.5rem;
+  }
+
+  .breakdown .section-heading {
+    margin-block-end: 0.25rem;
+  }
+
+  .amount-list {
+    grid-column: 1 / span 4;
+  }
+
+  .amount-list > div {
+    flex-direction: column;
+    align-items: start;
+    gap: 0.125rem;
+  }
+
+  .amount-list dt,
+  .amount-list dd {
+    white-space: nowrap;
+  }
+
+  .grand-total {
+    grid-column: 5;
+  }
+
+  .calculation-note {
+    grid-column: 1 / span 2;
+  }
+
+  .document-save-actions,
+  .snapshot-note {
+    grid-column: 3 / -1;
+  }
+
+  .document-save-actions {
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: end;
+  }
+
+  .finalize-note {
+    flex-basis: 100%;
+    margin: 0;
+  }
+}
+
 @media (width < 48rem) {
   .breakdown {
     display: block;
@@ -474,6 +551,16 @@
     padding-block-end: max(0.875rem, env(safe-area-inset-bottom, 0px));
     margin-inline: auto;
     background: var(--surface);
+  }
+}
+
+@media screen and (width >= 64rem) and (height >= 40rem) {
+  .document-form {
+    padding-block-end: 12rem;
+  }
+
+  .breakdown {
+    padding-block-end: max(0.5rem, env(safe-area-inset-bottom, 0px));
   }
 }
 
