@@ -1,6 +1,7 @@
 import type { DashboardFilters } from './useDashboard.types.js';
 import React from 'react';
 import type { DocumentSummary } from '../../shared/types/api-contracts.js';
+import type { DocumentListResponse } from '../../shared/types/document-list.js';
 import { responseError } from '../api/client.js';
 
 export function useDashboard(userId: string, onAuthExpired: () => void) {
@@ -17,6 +18,8 @@ export function useDashboard(userId: string, onAuthExpired: () => void) {
   });
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState('');
+  const [requestCursor, setRequestCursor] = React.useState<string | undefined>();
+  const pageCursors = React.useRef(new Map<number, { first: string; last: string }>());
 
   React.useEffect(() => {
     let active = true;
@@ -27,7 +30,8 @@ export function useDashboard(userId: string, onAuthExpired: () => void) {
     if (filters.issueDateStart) params.set('issueDateStart', filters.issueDateStart);
     if (filters.issueDateEnd) params.set('issueDateEnd', filters.issueDateEnd);
     if (filters.sort !== 'desc') params.set('sort', filters.sort);
-    if (filters.page > 1) params.set('page', String(filters.page));
+    if (filters.page > 1 || requestCursor) params.set('page', String(filters.page));
+    if (requestCursor) params.set('cursor', requestCursor);
     const query = params.toString();
 
     setLoading(true);
@@ -39,19 +43,16 @@ export function useDashboard(userId: string, onAuthExpired: () => void) {
           return null;
         }
         if (!response.ok) throw new Error((await responseError(response)).message ?? 'Could not load documents.');
-        return response.json() as Promise<{
-          items: DocumentSummary[];
-          page: number;
-          pageSize: number;
-          totalItems: number;
-          totalPages: number;
-        }>;
+        return response.json() as Promise<DocumentListResponse>;
       })
       .then(result => {
         if (!active || !result) return;
         setItems(result.items);
         setTotalItems(result.totalItems);
         setTotalPages(result.totalPages);
+        if (result.firstCursor && result.lastCursor) {
+          pageCursors.current.set(result.page, { first: result.firstCursor, last: result.lastCursor });
+        }
       })
       .catch((reason: unknown) => {
         if (!active || (reason instanceof DOMException && reason.name === 'AbortError')) return;
@@ -62,9 +63,11 @@ export function useDashboard(userId: string, onAuthExpired: () => void) {
       })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; controller.abort(); };
-  }, [filters, onAuthExpired, userId]);
+  }, [filters, requestCursor, onAuthExpired, userId]);
 
   const updateFilters = (changes: Partial<DashboardFilters>): void => {
+    pageCursors.current.clear();
+    setRequestCursor(undefined);
     setFilters(current => ({ ...current, ...changes, page: 1 }));
   };
   const hasActiveFilters = Boolean(
@@ -76,14 +79,22 @@ export function useDashboard(userId: string, onAuthExpired: () => void) {
   );
   const visiblePageNumbers = paginationPages(filters.page, totalPages);
   const resetFilters = (): void => {
+    pageCursors.current.clear();
+    setRequestCursor(undefined);
     setFilters({ search: '', status: 'all', issueDateStart: '', issueDateEnd: '', sort: 'desc', page: 1 });
   };
   const setPage = (page: number): void => {
-    setFilters(current => ({ ...current, page }));
+    const current = pageCursors.current.get(filters.page);
+    const visited = pageCursors.current.get(page);
+    const cursor = page === filters.page + 1 && current ? `after:${current.last}`
+      : page === filters.page - 1 && current ? `before:${current.first}`
+        : visited ? `at:${visited.first}` : undefined;
+    setRequestCursor(cursor);
+    setFilters(previous => ({ ...previous, page }));
   };
 
   const movePage = (direction: -1 | 1): void => {
-    setFilters(current => ({ ...current, page: current.page + direction }));
+    setPage(filters.page + direction);
   };
 
   return { items, totalItems, totalPages, filters, loading, error, updateFilters, resetFilters, setPage, movePage, hasActiveFilters, visiblePageNumbers };

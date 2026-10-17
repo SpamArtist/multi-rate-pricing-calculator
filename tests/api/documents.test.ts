@@ -6,6 +6,7 @@ import { createApp } from '../../src/server/app.js';
 import { createApiSession } from '../support/api-session.js';
 import { deleteTestOwner, migrationPool, withOwner } from '../support/db-fixture.js';
 import { TestClock } from '../support/test-clock.js';
+import type { DocumentListResponse } from '../../src/shared/types/document-list.js';
 
 const clock = new TestClock('2026-10-14T08:00:00.000Z');
 const server = createServer(createApp(undefined, clock, { signupRateLimit: { maxRequests: 100 } }));
@@ -305,11 +306,49 @@ describe('document drafts', () => {
 
     const beyondResponse = await client.fetch(`${baseUrl}/documents?search=acme&page=3`);
     const beyond = await beyondResponse.json() as { items: unknown[]; page: number; pageSize: number; totalItems: number; totalPages: number };
-    expect(beyond).toEqual({ items: [], page: 3, pageSize: 25, totalItems: 26, totalPages: 2 });
+    expect(beyond).toEqual({ items: [], page: 3, pageSize: 25, totalItems: 26, totalPages: 2, firstCursor: null, lastCursor: null });
 
     expect(await countedLineFetches(`${baseUrl}/documents?search=acme`, client)).toBe(1);
     expect(await countedLineFetches(`${baseUrl}/documents?search=acme&page=2`, client)).toBe(1);
     expect(await countedLineFetches(`${baseUrl}/documents?search=acme&page=3`, client)).toBe(0);
+  });
+
+  it('seeks across pages and reopens visited pages with stable date and UUID ordering', async () => {
+    const { client } = await signedInClient('documents-list-cursors@example.com');
+    for (let day = 1; day <= 51; day += 1) {
+      await createDraft(client, {
+        title: `Cursor ${day}`,
+        customerName: 'Cursor Customer',
+        issueDate: day <= 27 ? '2026-08-01' : '2026-08-02',
+      });
+    }
+
+    const getPage = async (sort: 'asc' | 'desc', page: number, cursor?: string): Promise<DocumentListResponse> => {
+      const params = new URLSearchParams({ search: 'Cursor Customer', sort, page: String(page) });
+      if (cursor) params.set('cursor', cursor);
+      const response = await client.fetch(`${baseUrl}/documents?${params}`);
+      expect(response.status).toBe(200);
+      return response.json() as Promise<DocumentListResponse>;
+    };
+
+    for (const sort of ['asc', 'desc'] as const) {
+      const first = await getPage(sort, 1);
+      const second = await getPage(sort, 2);
+      const third = await getPage(sort, 3);
+      expect([first.items.length, second.items.length, third.items.length]).toEqual([25, 25, 1]);
+      expect(first.totalItems).toBe(51);
+      expect(first.totalPages).toBe(3);
+      const ids = [first, second, third].flatMap(page => page.items.map(item => item.id));
+      expect(new Set(ids).size).toBe(51);
+      expect((await getPage(sort, 2, `after:${first.lastCursor}`)).items.map(item => item.id))
+        .toEqual(second.items.map(item => item.id));
+      expect((await getPage(sort, 1, `before:${second.firstCursor}`)).items.map(item => item.id))
+        .toEqual(first.items.map(item => item.id));
+      expect((await getPage(sort, 3, `after:${second.lastCursor}`)).items.map(item => item.id))
+        .toEqual(third.items.map(item => item.id));
+      expect((await getPage(sort, 3, `at:${third.firstCursor}`)).items.map(item => item.id))
+        .toEqual(third.items.map(item => item.id));
+    }
   });
 
   it('lists finalized pages from snapshots without fetching line items', async () => {
@@ -339,6 +378,8 @@ describe('document drafts', () => {
       { query: '?page=0', field: 'page' },
       { query: '?page=1.5', field: 'page' },
       { query: '?page=9007199254740992', field: 'page' },
+      { query: '?cursor=after:2026-08-01:00000000-0000-0000-0000-000000000000', field: 'page' },
+      { query: '?page=2&cursor=bad', field: 'cursor' },
     ]) {
       const response = await client.fetch(`${baseUrl}/documents${query}`);
       expect(response.status).toBe(422);

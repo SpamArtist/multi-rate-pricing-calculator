@@ -169,8 +169,21 @@ test('searches, filters, sorts, pages, and reopens API-backed Ledger rows', asyn
     await page.getByRole('button', { name: 'Page 2' }).click();
     const secondPageResponse = await secondPageResponsePromise;
     expect(secondPageResponse.status()).toBe(200);
+    expect(new URL(secondPageResponse.url()).searchParams.get('cursor')).toMatch(/^after:/);
     await expect(page.getByRole('button', { name: 'Page 2' })).toHaveAttribute('aria-current', 'page');
     await expect(page.locator('tbody tr')).toHaveCount(2);
+    await expect(page.getByRole('link', { name: 'Acme customer 01' })).toBeVisible();
+
+    const previousPageResponsePromise = page.waitForResponse(response => {
+      const url = new URL(response.url());
+      return url.pathname === '/documents' && url.searchParams.get('page') === '1';
+    });
+    await page.getByRole('button', { name: 'Previous page' }).click();
+    const previousPageResponse = await previousPageResponsePromise;
+    expect(previousPageResponse.status()).toBe(200);
+    expect(new URL(previousPageResponse.url()).searchParams.get('cursor')).toMatch(/^before:/);
+    await expect(page.getByRole('button', { name: 'Page 1' })).toHaveAttribute('aria-current', 'page');
+    await page.getByRole('button', { name: 'Page 2' }).click();
     await expect(page.getByRole('link', { name: 'Acme customer 01' })).toBeVisible();
 
     const draftResponsePromise = page.waitForResponse(response => {
@@ -178,7 +191,9 @@ test('searches, filters, sorts, pages, and reopens API-backed Ledger rows', asyn
       return url.pathname === '/documents' && url.searchParams.get('status') === 'draft';
     });
     await page.getByLabel('Status').selectOption('draft');
-    expect((await draftResponsePromise).status()).toBe(200);
+    const draftResponse = await draftResponsePromise;
+    expect(draftResponse.status()).toBe(200);
+    expect(new URL(draftResponse.url()).searchParams.has('cursor')).toBe(false);
     await expect(page.getByRole('button', { name: 'Page 1' })).toHaveAttribute('aria-current', 'page');
     await expect(page.getByText('26 shown')).toBeVisible();
     await expect(page.locator('tbody tr')).toHaveCount(25);
@@ -192,6 +207,7 @@ test('searches, filters, sorts, pages, and reopens API-backed Ledger rows', asyn
     await page.getByLabel('Sort by issue date').selectOption('asc');
     const sortResponse = await sortResponsePromise;
     expect(sortResponse.status()).toBe(200);
+    expect(new URL(sortResponse.url()).searchParams.has('cursor')).toBe(false);
     const sortedResult = await sortResponse.json() as { items: Array<{ title: string }>; page: number; totalItems: number };
     expect(sortedResult).toMatchObject({ page: 1, totalItems: 26 });
     expect(sortedResult.items[0]?.title).toBe('Acme customer 01');

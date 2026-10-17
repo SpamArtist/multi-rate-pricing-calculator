@@ -4,6 +4,7 @@ import { lineItems } from './schema.js';
 import type { TenantTransaction } from './client.types.js';
 import { calculatePricing, MAX_SAFE_AMOUNT } from '../shared/pricing.js';
 import type { ExactAmounts, LinePricingInput } from '../shared/types/pricing.js';
+import type { DocumentSummary } from '../shared/types/api-contracts.js';
 
 export function databaseLineInput(line: LineRow): LinePricingInput & { description: string } {
   return {
@@ -94,7 +95,7 @@ export async function serializeDocument(transaction: TenantTransaction, row: Doc
   };
 }
 
-export async function projectDocumentSummaries(transaction: TenantTransaction, rows: DocumentRow[]) {
+export async function projectDocumentSummaries(transaction: TenantTransaction, rows: DocumentRow[]): Promise<DocumentSummary[]> {
   const draftIds = rows.filter(row => row.status === 'draft').map(row => row.id);
   const draftLines = draftIds.length === 0 ? [] : await transaction.select().from(lineItems)
     .where(inArray(lineItems.documentId, draftIds));
@@ -109,7 +110,7 @@ export async function projectDocumentSummaries(transaction: TenantTransaction, r
     title: row.title,
     customerName: row.customerName,
     issueDate: row.issueDate,
-    status: row.status,
+    status: row.status as DocumentSummary['status'],
     amounts: jsonAmounts(row.status === 'finalized'
       ? documentSnapshot(row)
       : calculatePricing((linesByDocument.get(row.id) ?? []).map(databaseLineInput)).amounts),

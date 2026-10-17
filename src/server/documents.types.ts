@@ -7,19 +7,6 @@ export type DocumentFields = {
   issueDate: string;
 };
 
-export type DocumentListStatus = 'all' | 'draft' | 'finalized';
-
-export type DocumentListSort = 'desc' | 'asc';
-
-export type DocumentListQuery = {
-  search: string;
-  status: DocumentListStatus;
-  issueDateStart?: string;
-  issueDateEnd?: string;
-  sort: DocumentListSort;
-  page: number;
-};
-
 export type ParsedLineValues = Partial<{
   description: string;
   quantity: bigint;

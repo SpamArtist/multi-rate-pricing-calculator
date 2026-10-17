@@ -1,23 +1,22 @@
 import type {
-  CompleteLineInput, DocumentFields, DocumentListQuery, DocumentListSort,
-  DocumentListStatus, DraftLineMutation, ParsedLineValues,
+  CompleteLineInput, DocumentFields, DraftLineMutation, ParsedLineValues,
 } from './documents.types.js';
-import { and, asc, count, desc, eq, gte, ilike, lte, sql } from 'drizzle-orm';
-import { json, Router, type Request, type RequestHandler } from 'express';
+import { and, asc, eq, sql } from 'drizzle-orm';
+import { json, Router, type RequestHandler } from 'express';
 import { requireAuthenticated } from './auth.js';
 import type { AuthenticatedResponse } from './auth.types.js';
 import { documents, lineItems } from '../db/schema.js';
 import { withTenantTransaction } from '../db/client.js';
-import type { TenantTransaction } from '../db/client.types.js';
 import { isCalendarDate } from '../shared/document-validation.js';
-import { containsControlCharacters } from '../shared/text-validation.js';
+import type { TenantTransaction } from '../db/client.types.js';
 import type { FieldErrors as Fields } from '../shared/types/field-errors.js';
 import {
   amountsWithinSafeRange,
   calculatePricing,
   MAX_SAFE_AMOUNT,
 } from '../shared/pricing.js';
-import { databaseLineInput, projectDocumentSummaries, serializeDocument, serializeLineItem } from '../db/document-projection.js';
+import { databaseLineInput, serializeDocument, serializeLineItem } from '../db/document-projection.js';
+import { listDocumentsHandler } from './http/document-list.js';
 import type { Clock } from '../shared/types/clock.js';
 import { replaceDraftLines, writeLineSnapshots } from '../db/line-set-persistence.js';
 import type { DraftLineInput } from '../shared/types/draft-line.js';
@@ -26,89 +25,6 @@ import {
   parseAmount, parseCustomerName, parseDescription, parseIssueDate, parsePosition, parseQuantity,
   parseTaxRate, parseTitle, parseUuid, rejectUnknownFields,
 } from './document-input.js';
-
-const DOCUMENT_PAGE_SIZE = 25;
-const DOCUMENT_LIST_QUERY_FIELDS = ['search', 'status', 'issueDateStart', 'issueDateEnd', 'sort', 'page'] as const;
-
-function parseDocumentListQuery(request: Request): { fields: Fields; values?: DocumentListQuery } {
-  const fields = Object.create(null) as Fields;
-  const params = new URL(request.originalUrl, 'http://localhost').searchParams;
-
-  for (const name of new Set(params.keys())) {
-    if (!DOCUMENT_LIST_QUERY_FIELDS.includes(name as typeof DOCUMENT_LIST_QUERY_FIELDS[number])) {
-      fields[name] = 'This query parameter is not allowed.';
-    } else if (params.getAll(name).length !== 1) {
-      fields[name] = 'Provide this query parameter once.';
-    }
-  }
-
-  const value = (name: typeof DOCUMENT_LIST_QUERY_FIELDS[number]): string | undefined => {
-    if (params.getAll(name).length !== 1) return undefined;
-    return params.get(name) ?? undefined;
-  };
-
-  const search = value('search') ?? '';
-  if (containsControlCharacters(search)) {
-    fields.search = 'Remove control characters from search.';
-  }
-  const statusValue = value('status');
-  const status: DocumentListStatus = statusValue === undefined ? 'all' : statusValue as DocumentListStatus;
-  if (statusValue !== undefined && !['all', 'draft', 'finalized'].includes(statusValue)) {
-    fields.status = 'Choose all, draft, or finalized.';
-  }
-
-  const issueDateStartValue = value('issueDateStart');
-  const issueDateEndValue = value('issueDateEnd');
-  if (issueDateStartValue !== undefined && !isCalendarDate(issueDateStartValue)) {
-    fields.issueDateStart = 'Enter a valid calendar date.';
-  }
-  if (issueDateEndValue !== undefined && !isCalendarDate(issueDateEndValue)) {
-    fields.issueDateEnd = 'Enter a valid calendar date.';
-  }
-  if (
-    issueDateStartValue !== undefined
-    && issueDateEndValue !== undefined
-    && isCalendarDate(issueDateStartValue)
-    && isCalendarDate(issueDateEndValue)
-    && issueDateStartValue > issueDateEndValue
-  ) {
-    fields.issueDateEnd = 'End date must be on or after start date.';
-  }
-
-  const sortValue = value('sort');
-  const sort: DocumentListSort = sortValue === undefined ? 'desc' : sortValue as DocumentListSort;
-  if (sortValue !== undefined && sortValue !== 'desc' && sortValue !== 'asc') {
-    fields.sort = 'Choose ascending or descending issue date.';
-  }
-
-  const pageValue = value('page');
-  let page = 1;
-  if (pageValue !== undefined) {
-    if (!/^[1-9]\d*$/.test(pageValue)) {
-      fields.page = 'Enter a positive whole page number.';
-    } else {
-      const parsedPage = Number(pageValue);
-      if (!Number.isSafeInteger(parsedPage) || parsedPage - 1 > Math.floor(Number.MAX_SAFE_INTEGER / DOCUMENT_PAGE_SIZE)) {
-        fields.page = 'Enter a positive whole page number.';
-      } else {
-        page = parsedPage;
-      }
-    }
-  }
-
-  if (Object.keys(fields).length > 0) return { fields };
-  return {
-    fields,
-    values: {
-      search: search.trim(),
-      status,
-      ...(issueDateStartValue === undefined ? {} : { issueDateStart: issueDateStartValue }),
-      ...(issueDateEndValue === undefined ? {} : { issueDateEnd: issueDateEndValue }),
-      sort,
-      page,
-    },
-  };
-}
 
 function parseFields(body: unknown, allowed: readonly string[], required: readonly string[] = []): { fields: Fields; values?: Partial<DocumentFields> } {
   const fields = createFields();
@@ -255,49 +171,7 @@ export function createDocumentsRouter(clock: Clock): Router {
 
   router.use(requireAuthenticated(clock));
 
-  router.get('/', async (request, response: AuthenticatedResponse, next) => {
-    const parsed = parseDocumentListQuery(request);
-    if (!parsed.values) {
-      sendValidation(response, parsed.fields);
-      return;
-    }
-    const query = parsed.values;
-
-    const ownerId = response.locals.ownerId;
-    const filters = [];
-    if (query.search) {
-      const escapedSearch = query.search.replace(/[\\%_]/g, '\\$&');
-      filters.push(ilike(documents.customerName, `%${escapedSearch}%`));
-    }
-    if (query.status !== 'all') filters.push(eq(documents.status, query.status));
-    if (query.issueDateStart) filters.push(gte(documents.issueDate, query.issueDateStart));
-    if (query.issueDateEnd) filters.push(lte(documents.issueDate, query.issueDateEnd));
-    const where = filters.length > 0 ? and(...filters) : undefined;
-    const offset = (query.page - 1) * DOCUMENT_PAGE_SIZE;
-    const issueDateOrder = query.sort === 'asc' ? asc(documents.issueDate) : desc(documents.issueDate);
-
-    try {
-      const result = await withTenantTransaction(ownerId, async transaction => {
-        const [countResult] = await transaction.select({ totalItems: count() }).from(documents).where(where);
-        const rows = await transaction.select().from(documents)
-          .where(where)
-          .orderBy(issueDateOrder, asc(documents.id))
-          .limit(DOCUMENT_PAGE_SIZE)
-          .offset(offset);
-        const items = await projectDocumentSummaries(transaction, rows);
-        return {
-          items,
-          page: query.page,
-          pageSize: DOCUMENT_PAGE_SIZE,
-          totalItems: countResult?.totalItems ?? 0,
-          totalPages: Math.ceil((countResult?.totalItems ?? 0) / DOCUMENT_PAGE_SIZE),
-        };
-      }, { consistentRead: true });
-      response.status(200).json(result);
-    } catch (error) {
-      next(error);
-    }
-  });
+  router.get('/', listDocumentsHandler);
 
   router.post('/', json({ limit: '64kb' }), async (request, response: AuthenticatedResponse, next) => {
     const parsed = parseFields(request.body, ['title', 'issueDate', 'customerName'], ['title', 'issueDate']);
