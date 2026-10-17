@@ -1,5 +1,6 @@
 import React from 'react';
-import type { DocumentData, FieldErrors, User } from '../api/contracts.js';
+import type { DocumentData, User } from '../../shared/types/api-contracts.js';
+import type { FieldErrors } from '../../shared/types/field-errors.js';
 import { responseError } from '../api/client.js';
 import { localToday } from '../formatting.js';
 import { navigate, replaceRoute } from '../routing.js';

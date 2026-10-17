@@ -3,6 +3,7 @@ import css from '@eslint/css';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
 import cssMaxLines from './scripts/css-max-lines-rule.js';
+import noInlineTypes from './scripts/no-inline-types-rule.js';
 
 export default tseslint.config(
   { ignores: ['dist/**', 'node_modules/**', '.local/**', 'prototype/**', 'drizzle/**', 'test-results/**'] },
@@ -18,8 +19,10 @@ export default tseslint.config(
   },
   {
     files: ['src/**/*.{js,mjs,cjs,ts,tsx,mts,cts}'],
+    plugins: { local: { rules: { 'no-inline-types': noInlineTypes } } },
     rules: {
       'max-lines': ['error', 1000],
+      'local/no-inline-types': 'error',
     },
   },
   {

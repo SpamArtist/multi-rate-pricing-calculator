@@ -1,5 +1,5 @@
 import React from 'react';
-import type { DocumentSummary } from '../api/contracts.js';
+import type { DocumentSummary } from '../../shared/types/api-contracts.js';
 import { responseError } from '../api/client.js';
 
 export type DashboardFilters = {

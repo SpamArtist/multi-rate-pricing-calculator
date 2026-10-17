@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { expect, test } from '@playwright/test';
-import type { DraftSaveBody } from '../../src/web/api/contracts.js';
+import type { DraftSaveBody } from '../../src/shared/types/api-contracts.js';
 import { migrationPool } from '../support/db-fixture.js';
 
 test('an oversized draft can be corrected and saved without replaying the rejected payload', async ({ page }) => {

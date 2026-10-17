@@ -1,5 +1,5 @@
 import React from 'react';
-import type { User } from '../api/contracts.js';
+import type { User } from '../../shared/types/api-contracts.js';
 import { formatDate, formatEuro } from '../formatting.js';
 import { PrototypeIcon } from '../PrototypeIcon.js';
 import { navigate } from '../routing.js';

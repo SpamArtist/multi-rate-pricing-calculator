@@ -1,8 +1,8 @@
 import { isCalendarDate } from '../shared/document-validation.js';
-import { calculatePricing, type LinePricingInput } from '../shared/pricing.js';
+import { calculatePricing } from '../shared/pricing.js';
+import type { LinePricingInput } from '../shared/types/pricing.js';
+import type { FieldErrors as Fields } from '../shared/types/field-errors.js';
 import { containsControlCharacters } from '../shared/text-validation.js';
-
-export type Fields = Record<string, string>;
 
 export const inputError = {
   unknown: 'This field is not allowed.',

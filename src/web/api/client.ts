@@ -1,4 +1,4 @@
-import type { ApiError } from './contracts.js';
+import type { ApiError } from '../../shared/types/api-contracts.js';
 
 export async function responseError(response: Response): Promise<ApiError> {
   try {

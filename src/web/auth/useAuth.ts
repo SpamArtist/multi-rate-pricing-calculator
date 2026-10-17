@@ -1,6 +1,7 @@
 import React from 'react';
 import { validateRegistrationFields } from '../../shared/auth-validation.js';
-import type { User, FieldErrors } from '../api/contracts.js';
+import type { User } from '../../shared/types/api-contracts.js';
+import type { FieldErrors } from '../../shared/types/field-errors.js';
 import { responseError } from '../api/client.js';
 import { clearUserEditorValues } from '../editor/storage.js';
 import { navigate } from '../routing.js';

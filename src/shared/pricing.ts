@@ -1,25 +1,6 @@
-export type LinePricingInput = {
-  quantity: bigint;
-  unitPriceCents: bigint;
-  discountCents: bigint;
-  taxRateBasisPoints: number;
-};
-
-export type ExactAmounts = {
-  subtotalCents: bigint;
-  discountCents: bigint;
-  taxableCents: bigint;
-  taxCents: bigint;
-  totalCents: bigint;
-};
+import type { ExactAmounts, ExactPricing, LinePricingInput } from './types/pricing.js';
 
 export const MAX_SAFE_AMOUNT = BigInt(Number.MAX_SAFE_INTEGER);
-
-export type ExactPricing = {
-  lines: Array<{ amounts: ExactAmounts; discountExceedsSubtotal: boolean; withinSafeRange: boolean }>;
-  amounts: ExactAmounts;
-  withinSafeRange: boolean;
-};
 
 export function calculateLineAmounts(line: LinePricingInput): ExactAmounts {
   const subtotalCents = line.quantity * line.unitPriceCents;

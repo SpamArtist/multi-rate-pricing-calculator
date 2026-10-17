@@ -1,4 +1,4 @@
-import type { Amounts, DocumentData, DraftSaveBody } from '../api/contracts.js';
+import type { Amounts, DocumentData, DraftSaveBody } from '../../shared/types/api-contracts.js';
 import { responseError } from '../api/client.js';
 import {
   type DocumentValues,

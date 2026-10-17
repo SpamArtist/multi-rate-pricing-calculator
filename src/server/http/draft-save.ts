@@ -1,12 +1,12 @@
 import { json } from 'express';
 import { amountsWithinSafeRange, calculatePricing } from '../../shared/pricing.js';
+import type { FieldErrors as Fields } from '../../shared/types/field-errors.js';
 import { requireAuthenticated, type AuthenticatedHandler } from '../auth.js';
 import type { Clock } from '../clock.js';
 import { saveDraft, type DraftSaveInput } from '../draft-save.js';
 import {
   fields as createFields, inputError, isRecord, linePricingErrors, parseAmount, parseCustomerName,
   parseDescription, parseIssueDate, parseQuantity, parseTaxRate, parseTitle, parseUuid, rejectUnknownFields,
-  type Fields,
 } from '../document-input.js';
 
 const LINE_FIELDS = ['id', 'description', 'quantity', 'unitPriceCents', 'discountCents', 'taxRateBasisPoints'];

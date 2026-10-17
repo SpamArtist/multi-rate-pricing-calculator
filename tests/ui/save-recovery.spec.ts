@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { expect, test as base } from '@playwright/test';
 import { migrationPool } from '../support/db-fixture.js';
-import type { DocumentData, DraftSaveBody } from '../../src/web/api/contracts.js';
+import type { DocumentData, DraftSaveBody } from '../../src/shared/types/api-contracts.js';
 
 const test = base.extend<{ editor: void }>({
   editor: [async ({ page }, use) => {

@@ -1,5 +1,9 @@
 # Coding standards
 
+## Type ownership
+
+Put new named types and interfaces in a dedicated type file beside the feature that owns them (for example, `editor.types.ts`). Put types reused across features or runtime layers in `src/shared/types/`, with names that describe their shared meaning. Share a type when the concepts and behavior match, not merely because two shapes happen to be identical. Import types directly from their owner. Existing inline declarations listed in `scripts/inline-types-baseline.json` are migration debt; do not add more. ESLint enforces the location of new named declarations.
+
 ## Test independence
 
 Tests must still run and validate product behavior if `prototype/` is removed. Build test inputs and expected results from documented product contracts or independently authored fixtures. Do not copy or derive fixtures, baselines, or expected values from prototype code, sample data, screenshots, or runtime output.

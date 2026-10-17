@@ -1,0 +1,86 @@
+{
+  "src/db/client.ts": [
+    "AuthenticatedOwnerId",
+    "TenantTransaction",
+    "TenantOperation",
+    "TenantTransactionOptions"
+  ],
+  "src/db/document-projection.ts": [
+    "DocumentRow",
+    "LineRow"
+  ],
+  "src/db/draft-save-persistence.ts": [
+    "DraftMetadata"
+  ],
+  "src/db/line-set-persistence.ts": [
+    "DraftLineInput"
+  ],
+  "src/server/app.ts": [
+    "DatabaseCheck",
+    "AppOptions"
+  ],
+  "src/server/auth.ts": [
+    "SignupRateLimitOptions",
+    "SigninRateLimitOptions",
+    "AuthenticatedUser",
+    "AuthenticatedHandler",
+    "AuthenticatedResponse"
+  ],
+  "src/server/clock.ts": [
+    "Clock"
+  ],
+  "src/server/documents.ts": [
+    "DocumentFields",
+    "DocumentListStatus",
+    "DocumentListSort",
+    "DocumentListQuery",
+    "ParsedLineValues",
+    "CompleteLineInput",
+    "DraftLineMutation"
+  ],
+  "src/server/draft-save.ts": [
+    "DraftSaveInput"
+  ],
+  "src/server/reports.ts": [
+    "SummaryQuery"
+  ],
+  "src/web/auth/useAuth.ts": [
+    "RegistrationValues",
+    "AuthMode",
+    "AuthOperation",
+    "AuthSession"
+  ],
+  "src/web/dashboard/SummaryReport.tsx": [
+    "SummaryReportProps"
+  ],
+  "src/web/dashboard/useDashboard.ts": [
+    "DashboardFilters"
+  ],
+  "src/web/editor/LineItem.tsx": [
+    "LineItemProps"
+  ],
+  "src/web/editor/model.ts": [
+    "DocumentValues",
+    "LineValues",
+    "EditableLineField",
+    "PersistedEditorErrors",
+    "LineInputErrors",
+    "LinePreview"
+  ],
+  "src/web/editor/saveDraft.ts": [
+    "SaveErrors",
+    "SaveDraftOutcome",
+    "SaveCheckpoint",
+    "SaveDraftInput",
+    "SavePhase"
+  ],
+  "src/web/editor/storage.ts": [
+    "PendingDraftSave"
+  ],
+  "src/web/editor/useDocumentEditor.ts": [
+    "DocumentEditorProps"
+  ],
+  "src/web/routing.ts": [
+    "Route"
+  ]
+}

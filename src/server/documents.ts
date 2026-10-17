@@ -5,11 +5,12 @@ import { documents, lineItems } from '../db/schema.js';
 import { withTenantTransaction, type TenantTransaction } from '../db/client.js';
 import { isCalendarDate } from '../shared/document-validation.js';
 import { containsControlCharacters } from '../shared/text-validation.js';
+import type { FieldErrors as Fields } from '../shared/types/field-errors.js';
+import type { LinePricingInput } from '../shared/types/pricing.js';
 import {
   amountsWithinSafeRange,
   calculatePricing,
   MAX_SAFE_AMOUNT,
-  type LinePricingInput,
 } from '../shared/pricing.js';
 import { databaseLineInput, projectDocumentSummaries, serializeDocument, serializeLineItem } from '../db/document-projection.js';
 import { type Clock } from './clock.js';
@@ -17,7 +18,7 @@ import { replaceDraftLines, writeLineSnapshots, type DraftLineInput } from '../d
 import {
   fields as createFields, inputError, isRecord, linePricingErrors, MAX_DATABASE_INTEGER,
   parseAmount, parseCustomerName, parseDescription, parseIssueDate, parsePosition, parseQuantity,
-  parseTaxRate, parseTitle, parseUuid, rejectUnknownFields, type Fields,
+  parseTaxRate, parseTitle, parseUuid, rejectUnknownFields,
 } from './document-input.js';
 
 type DocumentFields = {

@@ -1,21 +1,16 @@
 import { containsControlCharacters } from './text-validation.js';
+import type { FieldErrors } from './types/field-errors.js';
+import type { RegistrationValidation } from './types/registration-validation.js';
 
 export const EMAIL_ERROR = 'Enter a valid email address.';
 export const PASSWORD_ERROR = 'Use 6 to 10 Unicode code points with no internal whitespace.';
-
-export interface RegistrationValidation {
-  emailDisplay: string;
-  emailCanonical: string;
-  password: string;
-  fields: Record<string, string>;
-}
 
 export function trimUnicodeWhitespace(value: string): string {
   return value.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, '');
 }
 
 export function validateRegistrationFields(emailValue: unknown, passwordValue: unknown): RegistrationValidation {
-  const fields = Object.create(null) as Record<string, string>;
+  const fields = Object.create(null) as FieldErrors;
   let emailDisplay = '';
   if (typeof emailValue !== 'string') {
     fields.email = EMAIL_ERROR;

@@ -5,6 +5,7 @@ import { json, Router, type Request, type RequestHandler } from 'express';
 import { db, type AuthenticatedOwnerId } from '../db/client.js';
 import { sessions, users } from '../db/schema.js';
 import { trimUnicodeWhitespace, validateRegistrationFields } from '../shared/auth-validation.js';
+import type { FieldErrors as Fields } from '../shared/types/field-errors.js';
 import { type Clock } from './clock.js';
 
 const SESSION_COOKIE = '__Host-session';
@@ -17,8 +18,6 @@ const ARGON2ID_OPTIONS = {
   parallelism: 1,
   hashLength: 32,
 } as const;
-
-type Fields = Record<string, string>;
 
 export interface SignupRateLimitOptions {
   maxRequests?: number;

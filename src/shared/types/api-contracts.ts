@@ -1,3 +1,5 @@
+import type { FieldErrors } from './field-errors.js';
+
 export type User = { id: string; email: string };
 export type Amounts = {
   subtotalCents: number;
@@ -35,7 +37,6 @@ export type DocumentData = DocumentSummary & {
     amounts: Amounts;
   }>;
 };
-export type FieldErrors = Record<string, string>;
 export type ApiError = { code?: string; message?: string; fields?: FieldErrors };
 
 export type DraftSaveBody = {

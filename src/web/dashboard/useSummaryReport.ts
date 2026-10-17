@@ -1,6 +1,6 @@
 import React from 'react';
 import { isCalendarDate } from '../../shared/document-validation.js';
-import type { SummaryReport } from '../api/contracts.js';
+import type { SummaryReport } from '../../shared/types/api-contracts.js';
 import { responseError } from '../api/client.js';
 import { localMonthRange } from '../formatting.js';
 

@@ -1,4 +1,4 @@
-import type { DocumentData, DraftSaveBody } from '../api/contracts.js';
+import type { DocumentData, DraftSaveBody } from '../../shared/types/api-contracts.js';
 import { lineValuesFromDocument, type DocumentValues, type LineValues, type PersistedEditorErrors } from './model.js';
 
 const EDITOR_STORAGE_PREFIX = 'pricing-calculator:editor:';

@@ -1,6 +1,7 @@
 import { isCalendarDate } from '../../shared/document-validation.js';
 import { amountsWithinSafeRange, calculateDocumentAmounts, calculateLineAmounts, MAX_SAFE_AMOUNT } from '../../shared/pricing.js';
-import type { Amounts, DocumentData, FieldErrors } from '../api/contracts.js';
+import type { Amounts, DocumentData } from '../../shared/types/api-contracts.js';
+import type { FieldErrors } from '../../shared/types/field-errors.js';
 
 export type DocumentValues = { title: string; customerName: string; issueDate: string };
 export type LineValues = {

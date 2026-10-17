@@ -4,10 +4,10 @@ import { withTenantTransaction } from '../db/client.js';
 import { documents } from '../db/schema.js';
 import { isCalendarDate } from '../shared/document-validation.js';
 import { MAX_SAFE_AMOUNT } from '../shared/pricing.js';
+import type { FieldErrors as Fields } from '../shared/types/field-errors.js';
 import { requireAuthenticated, type AuthenticatedResponse } from './auth.js';
 import { type Clock } from './clock.js';
 
-type Fields = Record<string, string>;
 type SummaryQuery = { start: string; end: string };
 
 function parseSummaryQuery(request: Request): { fields: Fields; values?: SummaryQuery } {
