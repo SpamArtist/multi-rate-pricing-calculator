@@ -401,7 +401,9 @@
     grid-column: 1 / -1;
     grid-row: 3;
   }
+}
 
+@media (width < 48rem) {
   .breakdown {
     display: block;
   }
@@ -438,6 +440,26 @@
 
   .document-save-actions {
     margin-block-start: 1rem;
+  }
+}
+
+@media screen and (width >= 48rem) and (height >= 40rem) {
+  .document-form {
+    padding-block-end: 17rem;
+  }
+
+  .breakdown {
+    position: fixed;
+    inset-inline: 0;
+    inset-block-end: 0;
+    z-index: 1;
+    inline-size: min(
+      calc(100% - clamp(2.28rem, 4vw, 4.375rem)),
+      calc(96.25rem - clamp(2.28rem, 4vw, 4.375rem))
+    );
+    padding-block-end: max(0.875rem, env(safe-area-inset-bottom, 0px));
+    margin-inline: auto;
+    background: var(--surface);
   }
 }
 
