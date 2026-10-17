@@ -1,0 +1,6 @@
+@import './styles/foundation.css';
+@import './styles/auth.css';
+@import './styles/dashboard.css';
+@import './styles/summary.css';
+@import './styles/editor.css';
+@import './styles/print.css';

@@ -1,0 +1,25 @@
+name: Production checks
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: .local/playwright
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/check-generated-evidence.sh
+      - run: bash scripts/check-test-isolation.sh
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: cp .env.example .env
+      - run: npm ci
+      - run: npx playwright install --with-deps --only-shell chromium
+      - run: docker compose down --volumes --remove-orphans
+      - run: npm run check:local
