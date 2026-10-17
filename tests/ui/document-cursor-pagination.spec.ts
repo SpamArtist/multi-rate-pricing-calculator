@@ -33,7 +33,13 @@ test('uses direct jumps once and cached cursors for visited numbered pages', asy
       await page.getByRole('button', { name: `Page ${targetPage}`, exact: true }).click();
       const response = await responsePromise;
       expect(response.status()).toBe(200);
-      const result = await response.json() as { items: Array<{ id: string; title: string }> };
+      const result = await response.json() as { items: Array<{ id: string; title: string }>; totalItems?: number; totalPages?: number };
+      if (new URL(response.url()).searchParams.has('cursor')) {
+        expect(new URL(response.url()).searchParams.get('includeTotal')).toBe('false');
+        expect(result).not.toHaveProperty('totalItems');
+        expect(result).not.toHaveProperty('totalPages');
+        await expect(page.getByText('51 shown')).toBeVisible();
+      } else expect(result.totalItems).toBe(51);
       await expect(page.getByRole('link', { name: result.items[0].title, exact: true })).toBeVisible();
       return { url: new URL(response.url()), id: result.items[0].id };
     };
@@ -45,6 +51,28 @@ test('uses direct jumps once and cached cursors for visited numbered pages', asy
     const revisit = await jump(3);
     expect(revisit.url.searchParams.get('cursor')).toMatch(/^at:/);
     expect(revisit.id).toBe(direct.id);
+
+    await jump(1);
+    const removed = await page.context().request.delete(`${documentsUrl}/${direct.id}`, { headers: { origin } });
+    expect(removed.status()).toBe(204);
+    const emptyCursor = page.waitForResponse(response => {
+      const url = new URL(response.url());
+      return url.pathname === '/documents' && url.searchParams.get('page') === '3' && url.searchParams.get('includeTotal') === 'false';
+    });
+    const countedRetry = page.waitForResponse(response => {
+      const url = new URL(response.url());
+      return url.pathname === '/documents' && url.searchParams.get('page') === '3' && !url.searchParams.has('cursor');
+    });
+    const finalPage = page.waitForResponse(response => {
+      const url = new URL(response.url());
+      return url.pathname === '/documents' && url.searchParams.get('page') === '2' && !url.searchParams.has('cursor');
+    });
+    await page.getByRole('button', { name: 'Page 3', exact: true }).click();
+    expect((await (await emptyCursor).json() as { items: unknown[] }).items).toEqual([]);
+    expect((await (await countedRetry).json() as { totalItems: number }).totalItems).toBe(50);
+    expect((await finalPage).status()).toBe(200);
+    await expect(page.getByRole('button', { name: 'Page 2', exact: true })).toHaveAttribute('aria-current', 'page');
+    await expect(page.getByText('50 shown')).toBeVisible();
   } finally {
     await migrationPool.query('DELETE FROM users WHERE email_canonical = $1', [email.toLowerCase()]);
   }

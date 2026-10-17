@@ -31,25 +31,46 @@ export function useDashboard(userId: string, onAuthExpired: () => void) {
     if (filters.issueDateEnd) params.set('issueDateEnd', filters.issueDateEnd);
     if (filters.sort !== 'desc') params.set('sort', filters.sort);
     if (filters.page > 1 || requestCursor) params.set('page', String(filters.page));
-    if (requestCursor) params.set('cursor', requestCursor);
-    const query = params.toString();
+    if (requestCursor) {
+      params.set('cursor', requestCursor);
+      params.set('includeTotal', 'false');
+    }
+
+    const fetchPage = async (): Promise<DocumentListResponse | null> => {
+      const query = params.toString();
+      const response = await fetch(`/documents${query ? `?${query}` : ''}`, { signal: controller.signal });
+      if (response.status === 401) {
+        onAuthExpired();
+        return null;
+      }
+      if (!response.ok) throw new Error((await responseError(response)).message ?? 'Could not load documents.');
+      return response.json() as Promise<DocumentListResponse>;
+    };
 
     setLoading(true);
     setError('');
-    void fetch(`/documents${query ? `?${query}` : ''}`, { signal: controller.signal })
-      .then(async response => {
-        if (response.status === 401) {
-          onAuthExpired();
-          return null;
-        }
-        if (!response.ok) throw new Error((await responseError(response)).message ?? 'Could not load documents.');
-        return response.json() as Promise<DocumentListResponse>;
-      })
-      .then(result => {
+    void fetchPage()
+      .then(async initialResult => {
+        let result = initialResult;
         if (!active || !result) return;
+        if (requestCursor && result.items.length === 0) {
+          pageCursors.current.clear();
+          params.delete('cursor');
+          params.delete('includeTotal');
+          result = await fetchPage();
+          if (!active || !result) return;
+        }
+        if (result.totalPages !== undefined && filters.page > Math.max(1, result.totalPages)) {
+          pageCursors.current.clear();
+          setRequestCursor(undefined);
+          setFilters(current => ({ ...current, page: Math.max(1, result.totalPages ?? 0) }));
+          return;
+        }
         setItems(result.items);
-        setTotalItems(result.totalItems);
-        setTotalPages(result.totalPages);
+        if (result.totalItems !== undefined && result.totalPages !== undefined) {
+          setTotalItems(result.totalItems);
+          setTotalPages(result.totalPages);
+        }
         if (result.firstCursor && result.lastCursor) {
           pageCursors.current.set(result.page, { first: result.firstCursor, last: result.lastCursor });
         }

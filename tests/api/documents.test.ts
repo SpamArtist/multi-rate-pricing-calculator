@@ -65,6 +65,26 @@ async function countedLineFetches(url: string, client: ReturnType<typeof createA
   }
 }
 
+async function countedDocumentListFetch(
+  url: string, client: ReturnType<typeof createApiSession>,
+): Promise<{ body: DocumentListResponse; countQueries: number }> {
+  const querySpy = vi.spyOn(Client.prototype, 'query');
+  try {
+    const response = await client.fetch(url);
+    expect(response.status).toBe(200);
+    const body = await response.json() as DocumentListResponse;
+    const countQueries = querySpy.mock.calls.filter(([statement]) => {
+      const query: unknown = statement;
+      const text = typeof query === 'string' ? query
+        : query && typeof query === 'object' && 'text' in query && typeof query.text === 'string' ? query.text : '';
+      return /\bcount\s*\(\s*\*\s*\)/i.test(text) && /\bfrom\s+"?documents"?\b/i.test(text);
+    }).length;
+    return { body, countQueries };
+  } finally {
+    querySpy.mockRestore();
+  }
+}
+
 async function createDraft(
   client: ReturnType<typeof createApiSession>,
   input: { title: string; customerName?: string; issueDate: string },
@@ -349,6 +369,35 @@ describe('document drafts', () => {
       expect((await getPage(sort, 3, `at:${third.firstCursor}`)).items.map(item => item.id))
         .toEqual(third.items.map(item => item.id));
     }
+
+    const initial = await countedDocumentListFetch(`${baseUrl}/documents?search=Cursor`, client);
+    expect(initial.countQueries).toBe(1);
+    expect(initial.body.totalItems).toBe(51);
+    const direct = await countedDocumentListFetch(`${baseUrl}/documents?search=Cursor&page=2`, client);
+    expect(direct.countQueries).toBe(1);
+    const cursor = encodeURIComponent(`after:${initial.body.lastCursor}`);
+    const skipped = await countedDocumentListFetch(`${baseUrl}/documents?search=Cursor&page=2&cursor=${cursor}&includeTotal=false`, client);
+    expect(skipped.countQueries).toBe(0);
+    expect(skipped.body).not.toHaveProperty('totalItems');
+    expect(skipped.body).not.toHaveProperty('totalPages');
+    expect(skipped.body.items.map(item => item.id)).toEqual(direct.body.items.map(item => item.id));
+    for (const [page, seek, expectedIds] of [
+      [1, 'before:' + direct.body.firstCursor, initial.body.items.map(item => item.id)],
+      [2, 'at:' + direct.body.firstCursor, direct.body.items.map(item => item.id)],
+    ] as const) {
+      const url = baseUrl + '/documents?search=Cursor&page=' + page
+        + '&cursor=' + encodeURIComponent(seek) + '&includeTotal=false';
+      const result = await countedDocumentListFetch(url, client);
+      expect(result.countQueries).toBe(0);
+      expect(result.body).not.toHaveProperty('totalItems');
+      expect(result.body).not.toHaveProperty('totalPages');
+      expect(result.body.items.map(item => item.id)).toEqual(expectedIds);
+    }
+    const countedCursor = await countedDocumentListFetch(`${baseUrl}/documents?search=Cursor&page=2&cursor=${cursor}`, client);
+    expect(countedCursor.countQueries).toBe(1);
+    expect(countedCursor.body.totalItems).toBe(51);
+    const filtered = await countedDocumentListFetch(`${baseUrl}/documents?status=draft`, client);
+    expect(filtered.countQueries).toBe(1);
   });
 
   it('lists finalized pages from snapshots without fetching line items', async () => {
@@ -380,6 +429,9 @@ describe('document drafts', () => {
       { query: '?page=9007199254740992', field: 'page' },
       { query: '?cursor=after:2026-08-01:00000000-0000-0000-0000-000000000000', field: 'page' },
       { query: '?page=2&cursor=bad', field: 'cursor' },
+      { query: '?includeTotal=false', field: 'includeTotal' },
+      { query: '?includeTotal=maybe', field: 'includeTotal' },
+      { query: '?page=2&cursor=bad&includeTotal=false', field: 'includeTotal' },
     ]) {
       const response = await client.fetch(`${baseUrl}/documents${query}`);
       expect(response.status).toBe(422);

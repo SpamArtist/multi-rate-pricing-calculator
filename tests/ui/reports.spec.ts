@@ -107,6 +107,7 @@ test('opens an on-demand local-month summary independent of Ledger filters', asy
       return url.pathname === '/documents' && url.searchParams.get('search') === 'Acme';
     });
     await page.getByLabel('Search customers').fill('Acme');
+    await page.getByRole('button', { name: 'Search', exact: true }).click();
     expect((await searchResponsePromise).status()).toBe(200);
     await expect(page.getByRole('button', { name: 'Page 1' })).toHaveAttribute('aria-current', 'page');
 

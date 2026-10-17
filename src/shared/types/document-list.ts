@@ -15,13 +15,14 @@ export type DocumentListQuery = {
   sort: DocumentListSort;
   page: number;
   cursor?: DocumentListCursor;
+  includeTotal: boolean;
 };
 export type DocumentListResponse = {
   items: DocumentSummary[];
   page: number;
   pageSize: number;
-  totalItems: number;
-  totalPages: number;
+  totalItems?: number;
+  totalPages?: number;
   firstCursor: string | null;
   lastCursor: string | null;
 };

@@ -155,6 +155,7 @@ test('searches, filters, sorts, pages, and reopens API-backed Ledger rows', asyn
       return url.pathname === '/documents' && url.searchParams.get('search') === '  acME  ';
     });
     await page.getByLabel('Search customers').fill('  acME  ');
+    await page.getByRole('button', { name: 'Search', exact: true }).click();
     const searchResponse = await searchResponsePromise;
     expect(searchResponse.status()).toBe(200);
     const searchResult = await searchResponse.json() as { items: Array<{ title: string }>; totalItems: number; totalPages: number };

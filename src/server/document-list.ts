@@ -8,13 +8,13 @@ export const DOCUMENT_PAGE_SIZE = 25;
 
 export async function listDocuments(ownerId: AuthenticatedOwnerId, query: DocumentListQuery): Promise<DocumentListResponse> {
   return withTenantTransaction(ownerId, async transaction => {
-    const totalItems = await countDocumentsForList(transaction, query);
-    const totalPages = Math.ceil(totalItems / DOCUMENT_PAGE_SIZE);
+    const totalItems = query.includeTotal ? await countDocumentsForList(transaction, query) : undefined;
     const rows = await readDocumentListPage(transaction, query, totalItems, DOCUMENT_PAGE_SIZE);
     const items = await projectDocumentSummaries(transaction, rows);
     const cursorFor = (item: typeof items[number]): string => `${item.issueDate}:${item.id}`;
     return {
-      items, page: query.page, pageSize: DOCUMENT_PAGE_SIZE, totalItems, totalPages,
+      items, page: query.page, pageSize: DOCUMENT_PAGE_SIZE,
+      ...(totalItems === undefined ? {} : { totalItems, totalPages: Math.ceil(totalItems / DOCUMENT_PAGE_SIZE) }),
       firstCursor: items.length ? cursorFor(items[0]) : null,
       lastCursor: items.length ? cursorFor(items[items.length - 1]) : null,
     };

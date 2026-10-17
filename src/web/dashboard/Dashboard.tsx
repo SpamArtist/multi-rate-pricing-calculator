@@ -10,6 +10,11 @@ import type { DashboardFilters } from './useDashboard.types.js';
 export function Dashboard({ user, onAuthExpired }: { user: User; onAuthExpired: () => void }): React.JSX.Element {
   const { items, totalItems, totalPages, filters, loading, error, updateFilters, resetFilters, setPage, movePage, hasActiveFilters, visiblePageNumbers } = useDashboard(user.id, onAuthExpired);
   const [reportOpen, setReportOpen] = React.useState(false);
+  const [searchDraft, setSearchDraft] = React.useState(filters.search);
+  const clearFilters = (): void => {
+    setSearchDraft('');
+    resetFilters();
+  };
 
   return (
     <div className={`dashboard-layout${reportOpen ? ' summary-open' : ''}`}>
@@ -44,7 +49,10 @@ export function Dashboard({ user, onAuthExpired }: { user: User; onAuthExpired: 
           <span aria-live="polite">{loading ? 'Loading…' : totalItems === 0 ? '0 documents' : `${totalItems} shown`}</span>
         </div>
         {error && <p className="request-error" role="alert">{error}</p>}
-        <form className="dashboard-filters" role="search" onSubmit={event => event.preventDefault()}>
+        <form className="dashboard-filters" role="search" onSubmit={event => {
+          event.preventDefault();
+          if (searchDraft !== filters.search) updateFilters({ search: searchDraft });
+        }}>
           <label className="search-control">
             <span className="visually-hidden">Search customers</span>
             <svg aria-hidden="true" viewBox="0 0 20 20"><circle cx="8.5" cy="8.5" r="5.5" /><path d="m12.5 12.5 4 4" /></svg>
@@ -52,10 +60,11 @@ export function Dashboard({ user, onAuthExpired }: { user: User; onAuthExpired: 
               type="search"
               aria-label="Search customers"
               placeholder="Search customers"
-              value={filters.search}
-              onChange={event => updateFilters({ search: event.currentTarget.value })}
+              value={searchDraft}
+              onChange={event => setSearchDraft(event.currentTarget.value)}
             />
           </label>
+          <button className="primary-button search-submit" type="submit" disabled={searchDraft === filters.search}>Search</button>
           <label className="filter-select">
             <span className="visually-hidden">Status</span>
             <select aria-label="Status" value={filters.status} onChange={event => updateFilters({ status: event.currentTarget.value as DashboardFilters['status'] })}>
@@ -79,8 +88,8 @@ export function Dashboard({ user, onAuthExpired }: { user: User; onAuthExpired: 
             <span>To</span>
             <input aria-label="To issue date" type="date" value={filters.issueDateEnd} onChange={event => updateFilters({ issueDateEnd: event.currentTarget.value })} />
           </label>
-          {hasActiveFilters && (
-            <button className="reset-filters" type="button" onClick={resetFilters}>
+          {(hasActiveFilters || searchDraft !== '') && (
+            <button className="reset-filters" type="button" onClick={clearFilters}>
               Clear filters
             </button>
           )}
@@ -91,7 +100,7 @@ export function Dashboard({ user, onAuthExpired }: { user: User; onAuthExpired: 
           hasActiveFilters ? (
             <div className="empty-state">
               <p>No documents match these filters.</p>
-              <button className="text-button" type="button" onClick={resetFilters}>
+              <button className="text-button" type="button" onClick={clearFilters}>
                 Clear filters
               </button>
             </div>

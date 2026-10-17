@@ -32,20 +32,27 @@ export async function countDocumentsForList(transaction: TenantTransaction, quer
 }
 
 export async function readDocumentListPage(
-  transaction: TenantTransaction, query: DocumentListQuery, totalItems: number, pageSize: number,
+  transaction: TenantTransaction, query: DocumentListQuery, totalItems: number | undefined, pageSize: number,
 ): Promise<Array<typeof documents.$inferSelect>> {
   const forwardOffset = (query.page - 1) * pageSize;
-  if (forwardOffset >= totalItems) return [];
-  const pageLength = Math.min(pageSize, totalItems - forwardOffset);
-  const backwardOffset = totalItems - forwardOffset - pageLength;
-  const reverse = query.cursor?.direction === 'before' || (!query.cursor && backwardOffset < forwardOffset);
+  if (totalItems !== undefined && forwardOffset >= totalItems) return [];
+  let reverse = query.cursor?.direction === 'before';
+  let offset = 0;
+  let limit = pageSize;
+  if (!query.cursor) {
+    if (totalItems === undefined) throw new TypeError('Direct page jumps require an exact total.');
+    limit = Math.min(pageSize, totalItems - forwardOffset);
+    const backwardOffset = totalItems - forwardOffset - limit;
+    reverse = backwardOffset < forwardOffset;
+    offset = reverse ? backwardOffset : forwardOffset;
+  }
   const where = and(filtersFor(query), query.cursor ? seekPredicate(query.cursor, query.sort) : undefined);
   const dateOrder = query.sort === 'asc' ? asc(documents.issueDate) : desc(documents.issueDate);
   const reverseDateOrder = query.sort === 'asc' ? desc(documents.issueDate) : asc(documents.issueDate);
   const rows = await transaction.select().from(documents)
     .where(where)
     .orderBy(reverse ? reverseDateOrder : dateOrder, reverse ? desc(documents.id) : asc(documents.id))
-    .limit(query.cursor ? pageSize : pageLength)
-    .offset(query.cursor ? 0 : reverse ? backwardOffset : forwardOffset);
+    .limit(limit)
+    .offset(offset);
   return reverse ? rows.reverse() : rows;
 }

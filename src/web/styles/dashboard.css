@@ -160,6 +160,11 @@
   opacity: 1;
 }
 
+.search-submit {
+  min-block-size: 2.5rem;
+  white-space: nowrap;
+}
+
 .filter-select {
   display: flex;
   flex: 0 1 7.5rem;
@@ -436,6 +441,7 @@
   }
 
   .search-control,
+  .search-submit,
   .reset-filters {
     grid-column: 1 / -1;
   }

@@ -6,7 +6,7 @@ import { isCalendarDate } from '../../shared/document-validation.js';
 import { containsControlCharacters } from '../../shared/text-validation.js';
 import { DOCUMENT_PAGE_SIZE, listDocuments } from '../document-list.js';
 
-const QUERY_FIELDS = ['search', 'status', 'issueDateStart', 'issueDateEnd', 'sort', 'page', 'cursor'] as const;
+const QUERY_FIELDS = ['search', 'status', 'issueDateStart', 'issueDateEnd', 'sort', 'page', 'cursor', 'includeTotal'] as const;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function parseQuery(request: Request): { fields: FieldErrors; values?: DocumentListQuery } {
@@ -55,11 +55,17 @@ function parseQuery(request: Request): { fields: FieldErrors; values?: DocumentL
       fields.page = 'Provide a page number with the cursor.';
     } else cursor = { direction: parts[0] as DocumentListCursor['direction'], issueDate: parts[1], id: parts[2] };
   }
+  const includeTotalValue = value('includeTotal');
+  if (includeTotalValue !== undefined && includeTotalValue !== 'true' && includeTotalValue !== 'false') {
+    fields.includeTotal = 'Choose true or false.';
+  } else if (includeTotalValue === 'false' && cursor === undefined) {
+    fields.includeTotal = 'A cursor is required when totals are omitted.';
+  }
   if (Object.keys(fields).length > 0) return { fields };
   return { fields, values: {
     search: search.trim(), status, ...(start === undefined ? {} : { issueDateStart: start }),
     ...(end === undefined ? {} : { issueDateEnd: end }), sort, page,
-    ...(cursor === undefined ? {} : { cursor }),
+    ...(cursor === undefined ? {} : { cursor }), includeTotal: includeTotalValue !== 'false',
   } };
 }
 
