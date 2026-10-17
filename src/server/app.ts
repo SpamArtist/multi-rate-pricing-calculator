@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { checkDatabase } from '../db/client.js';
 import { createAuthRouter, requireSameOriginForCookieMutations, type SigninRateLimitOptions, type SignupRateLimitOptions } from './auth.js';
 import { createDocumentsRouter } from './documents.js';
-import { draftSaveHandler } from './draft-save.js';
+import { draftSaveHandler } from './http/draft-save.js';
 import { createReportsRouter } from './reports.js';
 import { systemClock, type Clock } from './clock.js';
 

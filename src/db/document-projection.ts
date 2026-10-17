@@ -1,6 +1,6 @@
 import { asc, eq, inArray } from 'drizzle-orm';
-import { documents, lineItems } from '../db/schema.js';
-import type { TenantTransaction } from '../db/client.js';
+import { documents, lineItems } from './schema.js';
+import type { TenantTransaction } from './client.js';
 import { calculatePricing, MAX_SAFE_AMOUNT, type ExactAmounts, type LinePricingInput } from '../shared/pricing.js';
 
 type DocumentRow = typeof documents.$inferSelect;

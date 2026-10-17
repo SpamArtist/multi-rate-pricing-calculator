@@ -11,9 +11,9 @@ import {
   MAX_SAFE_AMOUNT,
   type LinePricingInput,
 } from '../shared/pricing.js';
-import { databaseLineInput, projectDocumentSummaries, serializeDocument, serializeLineItem } from './document-projection.js';
+import { databaseLineInput, projectDocumentSummaries, serializeDocument, serializeLineItem } from '../db/document-projection.js';
 import { type Clock } from './clock.js';
-import { replaceDraftLines, writeLineSnapshots, type DraftLineInput } from './line-set-persistence.js';
+import { replaceDraftLines, writeLineSnapshots, type DraftLineInput } from '../db/line-set-persistence.js';
 import {
   fields as createFields, inputError, isRecord, linePricingErrors, MAX_DATABASE_INTEGER,
   parseAmount, parseCustomerName, parseDescription, parseIssueDate, parsePosition, parseQuantity,

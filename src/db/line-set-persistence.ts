@@ -1,6 +1,6 @@
 import { and, eq, sql } from 'drizzle-orm';
-import type { TenantTransaction } from '../db/client.js';
-import { lineItems } from '../db/schema.js';
+import type { TenantTransaction } from './client.js';
+import { lineItems } from './schema.js';
 import type { ExactAmounts, LinePricingInput } from '../shared/pricing.js';
 
 export type DraftLineInput = LinePricingInput & { id?: string; description: string };
