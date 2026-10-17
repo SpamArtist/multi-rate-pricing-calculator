@@ -29,6 +29,13 @@
       "when": 1791936003000,
       "tag": "0003_atomic_draft_save",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791936004000,
+      "tag": "0004_document_listing_index",
+      "breakpoints": true
     }
   ]
 }

@@ -3,6 +3,7 @@ import {
   bigint,
   check,
   date,
+  index,
   integer,
   jsonb,
   pgTable,
@@ -54,6 +55,7 @@ export const documents = pgTable('documents', {
   finalizedTaxCents: bigint('finalized_tax_cents', { mode: 'bigint' }),
   finalizedTotalCents: bigint('finalized_total_cents', { mode: 'bigint' }),
 }, table => [
+  index('documents_owner_issue_date_desc_id_idx').on(table.ownerId, table.issueDate.desc(), table.id.asc()),
   check('documents_title_nonblank', sql`btrim(${table.title}) <> ''`),
   check('documents_status_valid', sql`${table.status} IN ('draft', 'finalized')`),
   check('documents_finalization_complete', sql`
