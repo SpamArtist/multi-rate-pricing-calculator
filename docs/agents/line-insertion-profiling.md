@@ -1,38 +1,59 @@
 # Profile the duplication bulk insert
 
-Use `node scripts/profile-duplication-insert.mjs` to inspect the database work inside line insertion. This is a diagnostic harness, not a product optimization or an endpoint benchmark. It extracts the exact `INSERT … SELECT` from the duplication route and fails if that SQL shape moves or gains unknown parameters.
+Run `node scripts/profile-duplication-insert.mjs` to compare the current line-copy policy with an experimental scalar parent-owner lookup. This is a disposable-database experiment; it does not change application code or migrations. The harness extracts the exact `INSERT … SELECT` from the duplication route and fails if it moves or gains unknown parameters.
 
-## Environment and execution
+## Environment
 
-Use an **empty, disposable, migrated** PostgreSQL database at `127.0.0.1:5433/pricing`. The harness refuses other hosts, ports, databases, or a nonempty users/documents table. Its default connection uses the repository's local `pricing_bootstrap` credentials. Override with `INSERT_PROFILE_DATABASE_URL` if necessary; never print that URL or save it in evidence. The bootstrap connection must permit session-local I/O timing, fixture setup, vacuum, and switching to `pricing_runtime`.
+Use an **empty, disposable, migrated** PostgreSQL database at `127.0.0.1:5433/pricing`, without other application/test traffic. Both connection URLs reject other hosts, ports and databases. The advisory lock excludes another profiler, not arbitrary application writers.
+
+Defaults use the repository's local `pricing_bootstrap` and `pricing_runtime` credentials. Override `INSERT_PROFILE_DATABASE_URL` and `INSERT_PROFILE_RUNTIME_URL` if needed; never print them or save them in evidence. Bootstrap access prepares fixtures, performs maintenance, temporarily changes policy, and cleans up. Timed SQL runs under session `SET ROLE pricing_runtime`, checked to be nonsuperuser/non-BYPASSRLS with RLS active on both tables. Isolation probes use actual runtime-login connections. Bootstrap session privilege enables I/O timing before switching the measured connection's effective role.
 
 ```sh
 node scripts/profile-duplication-insert.mjs
 ```
 
-Defaults: five warmups, 40 measured rounds per case and probe, 100 and 33,086 owned parent documents, draft/finalized sources at 2/40/337/411 lines. Each population also contains twice as many foreign-owned parents, and 1,580 total source lines. These fixtures are independently authored. No real customer data is read. Run without other traffic on that disposable database; the advisory lock excludes another copy of this profiler, not application writers.
+Defaults: five warmups, 40 measured rounds, 100 and 33,086 owned parent documents, and draft/finalized sources at 2/40/337/411 lines. Each population also has twice as many foreign-owned parents. Independently authored fixtures contain 1,581 lines including one foreign line for isolation checks.
 
-Set `INSERT_PROFILE_SAMPLES` (1–200) and `INSERT_PROFILE_PARENTS` (comma-separated counts, each 8–100,000; at most four) to narrow a run. Optional `INSERT_PROFILE_MAX_MS` makes the command fail **after saving results and cleaning up** if any case's plain insert median exceeds that diagnostic budget. This is an explicit local investigation threshold, not a production SLO or CI timing assertion.
+Options:
 
-```sh
-INSERT_PROFILE_SAMPLES=10 INSERT_PROFILE_PARENTS=33086 INSERT_PROFILE_MAX_MS=20 \
-  node scripts/profile-duplication-insert.mjs
+- `INSERT_PROFILE_SAMPLES`: 1–200 measured rounds per case, variant and probe.
+- `INSERT_PROFILE_LINES`: a comma-separated subset of `2,40,337,411`; use `411` for a shorter focused reproduction.
+- `INSERT_PROFILE_PARENTS`: comma-separated parent counts, each 8–100,000; at most four. Reverse the order for a repeated control.
+- `INSERT_PROFILE_VARIANTS`: `baseline`, `scalar`, or both in either order; default `baseline,scalar`. With both, order alternates each round.
+- `INSERT_PROFILE_MAX_MS`: optional local diagnostic budget. Exits nonzero after saving evidence and cleanup if any plain insert median exceeds it. This is not a product SLO or CI timing assertion.
+
+## Lifecycle and recovery
+
+Fixture owners are recorded in `.artifacts/insert-profile-<run-id>/cleanup-ledger.json` **before setup can commit**. Before inserting each population, empty tables are vacuumed with forced index cleanup and heap truncation; zero heap bytes are asserted. Source fixtures are committed. Both tables’ indexes are rebuilt once per population, then tables are vacuumed/analyzed. Rebuilding removes allocated index space inherited from earlier experiments; index definitions do not change. Ledger writes flush a temporary file and atomically replace the previous ledger. Each copy uses a fresh transaction: bind tenant, lock source, insert parent, insert lines, store synthetic draft totals, and COMMIT. A privileged connection verifies committed line inputs/order/finalized fields and deletes the copy outside the timed transaction. The owner ledger covers copies even if a commit response is lost.
+
+`VACUUM (ANALYZE, INDEX_CLEANUP ON, TRUNCATE ON)` runs before **every sample**, outside all sample timings. Explicit index cleanup prevents PostgreSQL’s AUTO shortcut from leaving sparse dead item identifiers that keep heap pages allocated. This prevents the old long-transaction/savepoint benchmark's accumulation of aborted tuples, inaccurate size-based estimates, and mid-run JIT activation. It also makes these controlled measurements maintenance-heavy and cache-warm; they are not an endpoint latency or production-load simulation. Each sample saves starting relation sizes, pages, and tuple estimates so stability remains inspectable.
+
+Policy DDL commits before runtime work, so its exclusive table lock is absent from measured transactions and concurrency checks. Both variants execute ALTER POLICY, including a no-op installation of the original for baseline. The scalar variant changes only `line_items_owner_isolation`'s USING expression:
+
+```sql
+(SELECT parent.owner_id FROM public.documents AS parent
+ WHERE parent.id = line_items.document_id)
+= nullif(current_setting('app.user_id', true), '')::uuid
 ```
 
-## Markers and safeguards
+Parent-table RLS remains active, and the explicit WITH CHECK expression and other policy attributes must remain unchanged. This is a correlated lookup, potentially once per line; do not describe it as a guaranteed single lookup per document.
 
-Each sample records savepoint creation, runtime role selection, tenant binding, source `FOR UPDATE`, destination parent insertion, bulk line insertion, invariant verification, and rollback. The timed insert runs as `pricing_runtime`, checked to be nonsuperuser/non-BYPASSRLS with RLS active on both tables. Fixture setup is outside sample timings. No policies, indexes, constraints, or triggers are disabled or altered.
+Ordinary completion/errors restore the original policy, remove only recorded fixture owners, and verify empty tables. Unlike the old rollback-only harness, **abrupt termination can leave committed fixtures and the experimental policy**. Recover using that run's ledger before other work:
 
-Three probes rotate within each round: plain INSERT, `EXPLAIN ANALYZE` with TIMING OFF, and TIMING ON. Both plans include BUFFERS, WAL, VERBOSE, SETTINGS, and JSON output. Full plans retain ownership subplans, actual rows/loops, sorting/window work, buffer hits/reads/writes, I/O timing, WAL, planning/execution/JIT information when present, and FK trigger calls/time. The harness records version/settings, policies, indexes, constraints, trigger definitions, table statistics, and before/after relation sizes. No custom policy-function timer is claimed: the current ownership checks are inline expressions.
+```sh
+node scripts/profile-duplication-insert.mjs --cleanup .artifacts/insert-profile-RUN-ID/cleanup-ledger.json
+```
 
-Fixtures stay in a separate outer transaction for each population; each sample rolls back its new parent and lines to a savepoint. Final rollback removes fixtures even after an error or lost connection. Every successful copy checks count, positions, descriptions, pricing inputs, and absence of copied finalized totals. Source state/counts and total table populations are checked after each workload; final empty tables are verified. `VACUUM ANALYZE` on the empty line/document tables before each population removes previous rollback debris. A 30-second statement timeout and two-second lock timeout bound individual SQL waits.
+Recovery restores the saved original USING clause, verifies the remaining policy attributes, checks the synthetic owner email/hash markers, and deletes only those owner IDs. It is idempotent. Keep the ledger until its phase is `clean`; never replace it with a ledger from another database or modify its stored policy. A 30-second statement timeout and two-second lock timeout bound individual profiler queries. Runtime isolation probes have their own bounded timeouts.
 
-Output lives in ignored `.artifacts/insert-profile-<run-id>/`: `results.json` retains every timing/plan, `summary.json` gives comparable metrics, and `report.md` explains the run. Files use mode 0600. Raw EXPLAIN contains synthetic UUIDs and SQL expressions; do not generalize this recorder to production data without redaction. Partial raw results are saved on ordinary errors. Abrupt process termination can prevent file writing, but database connection closure still rolls back uncommitted fixtures.
+## Markers and interpretation
 
-## Interpretation
+Each sample records BEGIN, tenant binding, source lock/read, parent insertion, bulk insertion, draft amount write and COMMIT. The insert marker excludes maintenance, verification, cleanup and transaction commit. Plain INSERT, EXPLAIN ANALYZE TIMING OFF, and TIMING ON probes rotate within each case. Both plans include BUFFERS, WAL, VERBOSE, SETTINGS, and JSON; full plans retain source/destination ownership work, rows/loops, sort/window work, buffer and I/O activity, planning/execution/JIT, and FK trigger calls/time.
 
-Use the median of paired same-round probe-minus-plain durations to estimate recorder overhead. Medians use sorted index `floor(n/2)`; the harness reports no p95. Inspect first/last-half timing drift and relation-size changes before claiming a stable baseline. Compare only matched cases; draft and finalized sources have equal line-count controls.
+`results.json` contains raw evidence, runtime/policy/index/trigger inventories, every sample's relation sizes/statistics, and isolation results. `summary.json` contains phase summaries and paired variant comparisons. `report.md` explains the run. All output is ignored and written mode 0600. Raw plans include synthetic UUIDs and SQL expressions; do not reuse this collector against real data without redaction.
 
-Plan nodes are inclusive and per-loop averages. Multiply node time by loops when interpreting repeated operations; do not add parents and children. The ownership scan is part of the source subtree, which is part of execution. Built-in FK cost appears in trigger entries; very small per-loop timings lose precision. TIMING OFF omits node timing and cannot provide a phase breakdown. See [PostgreSQL EXPLAIN documentation](https://www.postgresql.org/docs/18/using-explain.html).
+Medians use sorted index `floor(n/2)`. Savings and recorder overhead use same-round paired differences. No p95 or confidence interval is reported. Inspect first/last-half drift, JIT counts, plan shapes and row estimates. Source estimates include RLS selectivity, so they need not equal actual rows even after accurate ANALYZE. Parent-scale comparisons are not paired.
 
-These serial rollback cohorts have uncommitted fixtures, accumulated aborted tuples within each population, and different visibility/cache/snapshot behavior from normal committed transactions. They exclude durable COMMIT, HTTP/auth/JSON/React work, concurrency, and intentional lock contention. The synthetic line table is much smaller than the populated local seed. Results can identify expensive plan work; they cannot be subtracted from earlier endpoint timings or establish an optimization win. Validate any future solution with matched endpoint runs plus tenant-isolation and concurrency checks.
+A scalar parent check can still use a sequential scan on a small parent table; inspect the index/seq-scan loop counts rather than assuming every one-row result is an index lookup. Plan nodes include their descendants and report per-loop average times. Multiply by loops where appropriate; never sum parents with children. JIT overlaps execution and some node times. TIMING OFF omits per-node durations; only TIMING ON supplies phase summaries. See [PostgreSQL EXPLAIN documentation](https://www.postgresql.org/docs/18/using-explain.html).
+
+Before timing each variant/population, nine assertion groups verify owned CRUD, hidden foreign reads/updates/deletes, rejected foreign inserts/reparenting, missing/empty identity, A/B/A rebinding, transaction-local identity cleanup, source-lock contention and foreign denial while locked. Mutations roll back. These are correctness probes, not concurrent throughput or full endpoint tests. Any production policy proposal still needs API-level verification and matched workload measurement.
