@@ -22,6 +22,7 @@ function local(value) {
 const adminUrl = local(process.env.REPRESENTATIVE_DATABASE_URL ?? 'postgres://pricing_bootstrap:pricing_bootstrap@127.0.0.1:5433/pricing');
 const runtimeUrl = local(process.env.REPRESENTATIVE_RUNTIME_URL ?? 'postgres://pricing_runtime:pricing_runtime@127.0.0.1:5433/pricing');
 const samples = Number(process.env.REPRESENTATIVE_SAMPLES ?? 20);
+const uuidLocality = process.env.REPRESENTATIVE_UUID_LOCALITY === '1';
 const levels = (process.env.REPRESENTATIVE_LEVELS ?? '1004,10004').split(',').map(Number);
 assert.ok(Number.isInteger(samples) && samples >= 5 && samples <= 100);
 assert.ok(levels.length && levels.every((n, i) => Number.isInteger(n) && n >= 4 && n <= 20004 && (!i || n > levels[i - 1])));
@@ -32,7 +33,7 @@ const output = resolve(`.artifacts/representative-insert-${runId}`);
 await mkdir(output, { recursive: true });
 const ledgerPath = recovery ?? `${output}/cleanup-ledger.json`;
 const ledger = recovery ? JSON.parse(await readFile(recovery, 'utf8')) : { kind: 'representative-insert', runId, owners: [], phase: 'starting' };
-const results = { runId, levels, samples, records: [], http: [], phases: [], checks: [], indexProbes: [] };
+const results = { runId, levels, samples, experiment: uuidLocality ? 'uuid-locality' : 'baseline', records: [], http: [], phases: [], checks: [], indexProbes: [] };
 const pool = new Pool({ connectionString: adminUrl, max: 2 });
 let admin, worker, child, childExit;
 let prepared = false, locked = false, interrupted = false;
@@ -47,6 +48,14 @@ async function saveLedger() {
 }
 async function policies() {
   return (await admin.query("SELECT * FROM pg_policies WHERE schemaname='public' ORDER BY tablename,policyname")).rows;
+}
+async function schemaInventory() {
+  return {
+    defaults: (await admin.query("SELECT table_name,column_name,column_default FROM information_schema.columns WHERE table_schema='public' ORDER BY table_name,ordinal_position")).rows,
+    indexes: (await admin.query("SELECT tablename,indexname,indexdef FROM pg_indexes WHERE schemaname='public' ORDER BY tablename,indexname")).rows,
+    constraints: (await admin.query("SELECT conrelid::regclass::text relation,conname,pg_get_constraintdef(oid) definition FROM pg_constraint WHERE connamespace='public'::regnamespace ORDER BY conrelid::regclass::text,conname")).rows,
+    acls: (await admin.query("SELECT c.relname,a.attname,a.attacl::text FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid WHERE c.relnamespace='public'::regnamespace AND c.relkind='r' AND a.attnum>0 ORDER BY c.relname,a.attnum")).rows,
+  };
 }
 async function counts() {
   return (await admin.query('SELECT (SELECT count(*) FROM users)::int users,(SELECT count(*) FROM documents)::int documents,(SELECT count(*) FROM line_items)::int lines')).rows[0];
@@ -98,6 +107,7 @@ async function startServer(mode, level) {
 async function cleanup() {
   assert.equal(ledger.kind, 'representative-insert');
   assert.match(ledger.runId, /^[0-9a-f-]{36}$/);
+  if (ledger.diagnosticIdGrant) await admin.query('REVOKE INSERT(id) ON line_items FROM pricing_runtime');
   assert.deepEqual(await policies(), ledger.policies, 'Policy changed: inspect before fixture cleanup');
   const users = (await admin.query('SELECT id,email_canonical FROM users')).rows;
   assert.ok(users.every(row => ledger.owners.includes(row.id) && row.email_canonical === `representative-${ledger.runId}-${row.id.slice(0, 8)}@example.test`), 'Unrelated users: refusing broad fixture cleanup');
@@ -117,6 +127,7 @@ async function cleanup() {
   } catch (error) { await admin.query('ROLLBACK'); throw error; }
   assert.deepEqual(await policies(), ledger.policies, 'Policy changed during measurement');
   results.policyUnchanged = true;
+  if (ledger.schema) { assert.deepEqual(await schemaInventory(), ledger.schema); results.schemaUnchanged = true; }
   results.remaining = await counts();
   assert.deepEqual(results.remaining, { users: 0, documents: 0, lines: 0 });
   ledger.phase = 'clean'; await saveLedger();
@@ -128,9 +139,14 @@ assert.ok(match);
 const insertSql = match[1].replaceAll('${copyId}', '$1').replaceAll('${source.id}', '$2');
 assert.ok(!insertSql.includes('${'));
 results.insertSql = insertSql;
-async function measure(source, level, mode, sample) {
+const candidateSql = insertSql.replace(/INSERT INTO line_items\s*\(/, 'INSERT INTO line_items (id,').replace(/SELECT\s+/, 'SELECT uuidv7(), ');
+assert.notEqual(candidateSql, insertSql);
+assert.ok(candidateSql.includes('SELECT uuidv7(), $1'));
+const explicitV4Sql = candidateSql.replace('uuidv7()', 'gen_random_uuid()');
+if (uuidLocality) { results.candidateSql = candidateSql; results.explicitV4Sql = explicitV4Sql; }
+async function measure(source, level, mode, sample, variant = 'v4') {
   assert.equal(interrupted, false, 'Interrupted');
-  const record = { level, case: `${source.state}-${source.count}`, mode, round: sample, markers: {} };
+  const record = { level, case: `${source.state}-${source.count}`, mode, round: sample, variant, markers: {} };
   let id;
   async function timed(name, fn) { const start = performance.now(); try { return await fn(); } finally { record.markers[name] = round(performance.now() - start); } }
   await worker.query('BEGIN');
@@ -139,15 +155,25 @@ async function measure(source, level, mode, sample) {
     await timed('source.lock', () => worker.query('SELECT id FROM documents WHERE id=$1 FOR UPDATE', [source.id]));
     id = (await timed('document.insert', () => worker.query("INSERT INTO documents(owner_id,title,customer_name,issue_date) VALUES($1,'Synthetic copy','Synthetic customer','2026-10-19') RETURNING id", [source.owner]))).rows[0].id;
     const prefix = mode === 'plain' ? '' : `EXPLAIN (ANALYZE,BUFFERS,WAL,SETTINGS,VERBOSE,FORMAT JSON,TIMING ${mode === 'plan-on' ? 'ON' : 'OFF'}) `;
-    const inserted = await timed('lines.insert', () => worker.query(prefix + insertSql, [id, source.id]));
+    const sqlText = variant === 'v7' ? candidateSql : variant === 'v4-explicit' ? explicitV4Sql : insertSql;
+    const inserted = await timed('lines.insert', () => worker.query(prefix + sqlText, [id, source.id]));
     if (mode === 'plain') assert.equal(inserted.rowCount, source.count);
     else record.plan = inserted.rows[0]['QUERY PLAN'][0];
     await timed('transaction.commit', () => worker.query('COMMIT'));
     const copied = (await admin.query(`SELECT position,description,quantity,unit_price_cents,discount_cents,tax_rate_basis_points,
       finalized_subtotal_cents,finalized_taxable_cents,finalized_tax_cents,finalized_total_cents FROM line_items WHERE document_id=$1 ORDER BY position`, [id])).rows;
     assert.deepEqual(copied, source.expectedCopy);
-    await admin.query('DELETE FROM documents WHERE id=$1', [id]);
+    if (uuidLocality) {
+      const ids = (await admin.query('SELECT id,uuid_extract_version(id)::int version FROM line_items WHERE document_id=$1', [id])).rows;
+      assert.equal(ids.length, source.count);
+      assert.ok(ids.every(row => row.version === (variant === 'v7' ? 7 : 4)));
+      assert.equal(new Set(ids.map(row => row.id)).size, source.count);
+      const sourceIds = new Set(source.before.map(row => row.id));
+      assert.ok(ids.every(row => !sourceIds.has(row.id)));
+      record.idVersion = ids[0].version;
+    } else await admin.query('DELETE FROM documents WHERE id=$1', [id]);
     if (sample >= 0) results.records.push(record);
+    return id;
   } catch (error) { await worker.query('ROLLBACK'); throw error; }
 }
 async function httpPhase(sources, level, email, password) {
@@ -193,9 +219,22 @@ try {
   else {
     assert.deepEqual(await counts(), { users: 0, documents: 0, lines: 0 });
     ledger.policies = await policies();
+    ledger.schema = await schemaInventory();
     assert.ok(ledger.policies.find(p => p.policyname === 'line_items_owner_isolation').qual.includes('EXISTS'));
+    if (uuidLocality) {
+      assert.equal(ledger.schema.defaults.find(c => c.table_name === 'line_items' && c.column_name === 'id').column_default, 'gen_random_uuid()');
+      assert.equal((await admin.query('SELECT uuid_extract_version(uuidv7())::int version')).rows[0].version, 7);
+    }
     ledger.owners = Array.from({ length: 3 }, () => randomUUID());
     await saveLedger(); prepared = true;
+    if (uuidLocality) {
+      assert.equal((await admin.query("SELECT has_column_privilege('pricing_runtime','line_items','id','INSERT') allowed")).rows[0].allowed, false);
+      // Record recovery intent first. Both controls and candidate share this narrow
+      // disposable-only grant; normal app credentials cannot supply a line ID.
+      ledger.diagnosticIdGrant = true; await saveLedger();
+      await admin.query('GRANT INSERT(id) ON line_items TO pricing_runtime');
+      results.diagnosticIdGrant = true;
+    }
     const free = await statfs('.'); assert.ok(free.bavail * free.bsize >= 7 * 2 ** 30, 'Need 7 GiB free before starting');
     const password = randomBytes(6).toString('base64url');
     const passwordHash = await argon2.hash(password);
@@ -231,13 +270,36 @@ try {
         source.before = (await admin.query('SELECT * FROM line_items WHERE document_id=$1 ORDER BY position', [source.id])).rows;
         source.expectedCopy = source.before.map(row => Object.fromEntries(['position', 'description', 'quantity', 'unit_price_cents', 'discount_cents', 'tax_rate_basis_points', 'finalized_subtotal_cents', 'finalized_taxable_cents', 'finalized_tax_cents', 'finalized_total_cents'].map(k => [k, k.startsWith('finalized_') ? null : row[k]])));
       }
+      const retained = [];
       for (let sample = -5; sample < samples; sample++) {
-        const modes = sample < 0 || sample >= 5 ? ['plain'] : ['plain', 'plan-off', 'plan-on'];
+        // Spread paired plans through the experiment; preserve the baseline mode's schedule.
+        const probe = uuidLocality ? sample >= 0 && sample % Math.max(1, Math.floor(samples / 5)) === 0 : sample >= 0 && sample < 5;
+        const modes = probe ? ['plain', 'plan-off', 'plan-on'] : ['plain'];
         const ordered = sample % 2 ? [...modes].reverse() : modes;
-        for (const mode of ordered) for (const source of sources) await measure(source, level, mode, sample);
+        const cases = uuidLocality && sample % 2 ? [...sources].reverse() : sources;
+        for (const mode of ordered) for (const source of cases) {
+          const schedules = [
+            ['v4', 'v4-explicit', 'v7'], ['v7', 'v4-explicit', 'v4'],
+            ['v4-explicit', 'v7', 'v4'], ['v4', 'v7', 'v4-explicit'],
+            ['v7', 'v4', 'v4-explicit'], ['v4-explicit', 'v4', 'v7'],
+          ];
+          const variants = uuidLocality ? schedules[((sample % 6) + 6) % 6] : ['v4'];
+          for (const variant of variants) {
+            const id = await measure(source, level, mode, sample, variant);
+            if (uuidLocality) retained.push(id);
+          }
+        }
       }
       phase.afterSql = await inventory();
-      await httpPhase(sources, level, `representative-${runId}-${ledger.owners[0].slice(0, 8)}@example.test`, password);
+      // Retain measured copies until the end so UUIDv7 is tested on growing live keys,
+      // not an immediately deleted/reused key range. Cleanup is outside every timer.
+      if (uuidLocality) {
+        phase.retainedCopies = retained.length;
+        phase.countsWithCopies = await counts();
+        await admin.query('DELETE FROM documents WHERE id=ANY($1::uuid[])', [retained]);
+        const currentSchema = await schemaInventory();
+        for (const key of ['defaults', 'indexes', 'constraints']) assert.deepEqual(currentSchema[key], ledger.schema[key]);
+      } else await httpPhase(sources, level, `representative-${runId}-${ledger.owners[0].slice(0, 8)}@example.test`, password);
       phase.afterHttp = await inventory();
       for (const source of sources) assert.deepEqual((await admin.query('SELECT * FROM line_items WHERE document_id=$1 ORDER BY position', [source.id])).rows, source.before);
       assert.deepEqual(await counts(), phase.counts);
