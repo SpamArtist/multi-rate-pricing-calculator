@@ -15,6 +15,7 @@ import { createRepresentativeParents, populateRepresentativeParents } from './pr
 import { verifyHttpCopy } from './profile-duplication-http-checks.mjs';
 import { measurePrimaryKeyProbes } from './profile-index-probes.mjs';
 import { measureUuidHttp } from './profile-uuid-http.mjs';
+import { measureSerialCosts, serialFilesystem } from './profile-serial-costs.mjs';
 
 function local(value) {
   const url = new URL(value);
@@ -26,7 +27,8 @@ const runtimeUrl = local(process.env.REPRESENTATIVE_RUNTIME_URL ?? 'postgres://p
 const samples = Number(process.env.REPRESENTATIVE_SAMPLES ?? 20);
 const uuidLocality = process.env.REPRESENTATIVE_UUID_LOCALITY === '1';
 const uuidHttp = process.env.REPRESENTATIVE_UUID_HTTP === '1';
-assert.ok(!(uuidLocality && uuidHttp), 'Choose one UUID experiment');
+const serialCosts = process.env.REPRESENTATIVE_SERIAL_COSTS === '1';
+assert.ok([uuidLocality, uuidHttp, serialCosts].filter(Boolean).length <= 1, 'Choose one experiment');
 const levels = (process.env.REPRESENTATIVE_LEVELS ?? '1004,10004').split(',').map(Number);
 assert.ok(Number.isInteger(samples) && samples >= 5 && samples <= 100);
 assert.ok(levels.length && levels.every((n, i) => Number.isInteger(n) && n >= 4 && n <= 20004 && (!i || n > levels[i - 1])));
@@ -37,7 +39,7 @@ const output = resolve(`.artifacts/representative-insert-${runId}`);
 await mkdir(output, { recursive: true });
 const ledgerPath = recovery ?? `${output}/cleanup-ledger.json`;
 const ledger = recovery ? JSON.parse(await readFile(recovery, 'utf8')) : { kind: 'representative-insert', runId, owners: [], phase: 'starting' };
-const results = { runId, levels, samples, experiment: uuidHttp ? 'uuid-http' : uuidLocality ? 'uuid-locality' : 'baseline', records: [], http: [], uuidHttp: [], phases: [], checks: [], indexProbes: [] };
+const results = { runId, levels, samples, experiment: serialCosts ? 'serial-costs' : uuidHttp ? 'uuid-http' : uuidLocality ? 'uuid-locality' : 'baseline', records: [], http: [], uuidHttp: [], phases: [], checks: [], indexProbes: [] };
 const pool = new Pool({ connectionString: adminUrl, max: 2 });
 let admin, worker, child, childExit;
 let prepared = false, locked = false, interrupted = false;
@@ -254,6 +256,10 @@ try {
     }
     ledger.owners = Array.from({ length: 3 }, () => randomUUID());
     await saveLedger(); prepared = true;
+    if (serialCosts) {
+      results.filesystems = [await serialFilesystem(admin)];
+      assert.ok(results.filesystems[0].availableBytes >= 1024 ** 3, 'Need 1 GiB on database filesystem before serial profiling');
+    }
     if (uuidHttp) {
       assert.equal((await admin.query("SELECT has_column_privilege('pricing_runtime','line_items','id','INSERT') allowed")).rows[0].allowed, false);
       ledger.uuidHttpDefault = 'gen_random_uuid()'; await saveLedger();
@@ -302,7 +308,10 @@ try {
       await populateRepresentativeParents({ admin, parents, from: loaded, to: level, onProgress: progress => {
         assert.equal(interrupted, false, 'Interrupted');
         if (progress.completedParents % 1000 === 0 || progress.completedParents === level - loaded) console.log(JSON.stringify({ level, ...progress }));
-      } });
+      }, beforeBatch: serialCosts ? async () => {
+        const filesystem = await serialFilesystem(admin); results.filesystems.push(filesystem);
+        assert.ok(filesystem.availableBytes >= 600 * 1024 ** 2, 'Database filesystem reserve reached');
+      } : undefined });
       loaded = level; ledger.phase = `loaded-${level}`; await saveLedger();
       await admin.query('ANALYZE documents'); await admin.query('ANALYZE line_items');
       const phase = { level, before: await inventory(), counts: await counts() }; results.phases.push(phase);
@@ -310,6 +319,18 @@ try {
       for (const source of sources) {
         source.before = (await admin.query('SELECT * FROM line_items WHERE document_id=$1 ORDER BY position', [source.id])).rows;
         source.expectedCopy = source.before.map(row => Object.fromEntries(['position', 'description', 'quantity', 'unit_price_cents', 'discount_cents', 'tax_rate_basis_points', 'finalized_subtotal_cents', 'finalized_taxable_cents', 'finalized_tax_cents', 'finalized_total_cents'].map(k => [k, k.startsWith('finalized_') ? null : row[k]])));
+      }
+      if (serialCosts) {
+        await measureSerialCosts({ admin, sources: sources.slice(0, 2), insertSql, samples, level, results,
+          checkInterrupted: () => assert.equal(interrupted, false, 'Interrupted') });
+        phase.afterSerial = await inventory();
+        assert.deepEqual(await counts(), phase.counts);
+        assert.deepEqual(await schemaInventory(), ledger.schema);
+        assert.deepEqual(await policies(), ledger.policies);
+        for (const source of sources) assert.deepEqual((await admin.query('SELECT * FROM line_items WHERE document_id=$1 ORDER BY position', [source.id])).rows, source.before);
+        results.checks.push({ level, serialCosts: true, sourcesUnchanged: true, countsUnchanged: true });
+        await writeFile(`${output}/results.json`, JSON.stringify(results, null, 2), { mode: 0o600 });
+        continue;
       }
       if (uuidHttp) {
         await measureUuidHttp({ admin, parents, level, samples, request, startServer, stopServer, setVariant: setUuidDefault, inventory,
