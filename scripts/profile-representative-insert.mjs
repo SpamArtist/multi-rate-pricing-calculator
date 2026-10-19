@@ -1,4 +1,5 @@
-// Measurement only: original policies, schema and endpoint code stay unchanged.
+// Measurement only: policies and endpoint code stay unchanged; HTTP UUID mode
+// temporarily switches the disposable line-ID default with ledgered recovery.
 import assert from 'node:assert/strict';
 import { randomUUID, randomBytes, createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile, rename, statfs } from 'node:fs/promises';
@@ -13,6 +14,7 @@ import argon2 from 'argon2';
 import { createRepresentativeParents, populateRepresentativeParents } from './profile-representative-fixture.mjs';
 import { verifyHttpCopy } from './profile-duplication-http-checks.mjs';
 import { measurePrimaryKeyProbes } from './profile-index-probes.mjs';
+import { measureUuidHttp } from './profile-uuid-http.mjs';
 
 function local(value) {
   const url = new URL(value);
@@ -23,6 +25,8 @@ const adminUrl = local(process.env.REPRESENTATIVE_DATABASE_URL ?? 'postgres://pr
 const runtimeUrl = local(process.env.REPRESENTATIVE_RUNTIME_URL ?? 'postgres://pricing_runtime:pricing_runtime@127.0.0.1:5433/pricing');
 const samples = Number(process.env.REPRESENTATIVE_SAMPLES ?? 20);
 const uuidLocality = process.env.REPRESENTATIVE_UUID_LOCALITY === '1';
+const uuidHttp = process.env.REPRESENTATIVE_UUID_HTTP === '1';
+assert.ok(!(uuidLocality && uuidHttp), 'Choose one UUID experiment');
 const levels = (process.env.REPRESENTATIVE_LEVELS ?? '1004,10004').split(',').map(Number);
 assert.ok(Number.isInteger(samples) && samples >= 5 && samples <= 100);
 assert.ok(levels.length && levels.every((n, i) => Number.isInteger(n) && n >= 4 && n <= 20004 && (!i || n > levels[i - 1])));
@@ -33,7 +37,7 @@ const output = resolve(`.artifacts/representative-insert-${runId}`);
 await mkdir(output, { recursive: true });
 const ledgerPath = recovery ?? `${output}/cleanup-ledger.json`;
 const ledger = recovery ? JSON.parse(await readFile(recovery, 'utf8')) : { kind: 'representative-insert', runId, owners: [], phase: 'starting' };
-const results = { runId, levels, samples, experiment: uuidLocality ? 'uuid-locality' : 'baseline', records: [], http: [], phases: [], checks: [], indexProbes: [] };
+const results = { runId, levels, samples, experiment: uuidHttp ? 'uuid-http' : uuidLocality ? 'uuid-locality' : 'baseline', records: [], http: [], uuidHttp: [], phases: [], checks: [], indexProbes: [] };
 const pool = new Pool({ connectionString: adminUrl, max: 2 });
 let admin, worker, child, childExit;
 let prepared = false, locked = false, interrupted = false;
@@ -48,6 +52,9 @@ async function saveLedger() {
 }
 async function policies() {
   return (await admin.query("SELECT * FROM pg_policies WHERE schemaname='public' ORDER BY tablename,policyname")).rows;
+}
+async function databaseIdentity() {
+  return (await admin.query("SELECT current_database() database,(SELECT oid::text FROM pg_database WHERE datname=current_database()) database_oid,system_identifier::text FROM pg_control_system()")).rows[0];
 }
 async function schemaInventory() {
   return {
@@ -107,7 +114,7 @@ async function startServer(mode, level) {
 async function cleanup() {
   assert.equal(ledger.kind, 'representative-insert');
   assert.match(ledger.runId, /^[0-9a-f-]{36}$/);
-  if (ledger.diagnosticIdGrant) await admin.query('REVOKE INSERT(id) ON line_items FROM pricing_runtime');
+  if (ledger.databaseIdentity) assert.deepEqual(await databaseIdentity(), ledger.databaseIdentity, 'Recovery ledger belongs to another database');
   assert.deepEqual(await policies(), ledger.policies, 'Policy changed: inspect before fixture cleanup');
   const users = (await admin.query('SELECT id,email_canonical FROM users')).rows;
   assert.ok(users.every(row => ledger.owners.includes(row.id) && row.email_canonical === `representative-${ledger.runId}-${row.id.slice(0, 8)}@example.test`), 'Unrelated users: refusing broad fixture cleanup');
@@ -118,9 +125,16 @@ async function cleanup() {
   await admin.query('BEGIN');
   try {
     await admin.query('LOCK TABLE users,documents,line_items,draft_save_mutations IN ACCESS EXCLUSIVE MODE');
-    const current = (await admin.query('SELECT id FROM users')).rows;
-    assert.ok(current.every(row => ledger.owners.includes(row.id)));
+    const current = (await admin.query('SELECT id,email_canonical FROM users')).rows;
+    assert.ok(current.every(row => ledger.owners.includes(row.id) && row.email_canonical === `representative-${ledger.runId}-${row.id.slice(0, 8)}@example.test`));
     assert.equal((await admin.query('SELECT count(*)::int n FROM documents WHERE NOT (owner_id=ANY($1::uuid[]))', [ledger.owners])).rows[0].n, 0);
+    if (ledger.phase === 'clean' && ledger.schema) assert.deepEqual(await schemaInventory(), ledger.schema, 'A clean ledger must not overwrite newer schema state');
+    if (ledger.uuidHttpDefault) {
+      assert.equal(ledger.uuidHttpDefault, 'gen_random_uuid()');
+      await admin.query('ALTER TABLE public.line_items ALTER COLUMN id SET DEFAULT gen_random_uuid()');
+    }
+    if (ledger.diagnosticIdGrant) await admin.query('REVOKE INSERT(id) ON line_items FROM pricing_runtime');
+    if (ledger.schema) assert.deepEqual(await schemaInventory(), ledger.schema, 'Unexpected schema changes: refusing fixture cleanup');
     await admin.query('TRUNCATE TABLE line_items,documents,draft_save_mutations');
     await admin.query('DELETE FROM users WHERE id=ANY($1::uuid[])', [ledger.owners]);
     await admin.query('COMMIT');
@@ -131,6 +145,18 @@ async function cleanup() {
   results.remaining = await counts();
   assert.deepEqual(results.remaining, { users: 0, documents: 0, lines: 0 });
   ledger.phase = 'clean'; await saveLedger();
+}
+async function setUuidDefault(variant) {
+  assert.ok(uuidHttp && ['v4', 'v7'].includes(variant));
+  assert.equal(ledger.uuidHttpDefault, 'gen_random_uuid()');
+  await admin.query(`ALTER TABLE public.line_items ALTER COLUMN id SET DEFAULT ${variant === 'v7' ? 'uuidv7()' : 'gen_random_uuid()'}`);
+  const current = await schemaInventory();
+  const changed = current.defaults.find(c => c.table_name === 'line_items' && c.column_name === 'id');
+  assert.equal(changed.column_default, variant === 'v7' ? 'uuidv7()' : 'gen_random_uuid()');
+  changed.column_default = ledger.uuidHttpDefault;
+  assert.deepEqual(current, ledger.schema, 'Only the disposable line-ID default may change');
+  assert.deepEqual(await policies(), ledger.policies);
+  ledger.phase = `uuid-http-${variant}`; await saveLedger();
 }
 const route = await readFile('src/server/documents.ts', 'utf8');
 const section = route.split("router.post('/:id/duplicate'")[1]?.split("router.post('/:id/finalize'")[0];
@@ -215,18 +241,23 @@ try {
   await admin.query("SET statement_timeout='180s'"); await admin.query("SET lock_timeout='3s'");
   locked = (await admin.query("SELECT pg_try_advisory_lock(hashtext('duplication-insert-profiler')) locked")).rows[0].locked;
   assert.ok(locked);
-  if (recovery) { assert.equal(ledger.kind, 'representative-insert'); prepared = true; }
+  if (recovery) { assert.equal(ledger.kind, 'representative-insert'); results.recoveredRunId = ledger.runId; prepared = true; }
   else {
     assert.deepEqual(await counts(), { users: 0, documents: 0, lines: 0 });
     ledger.policies = await policies();
     ledger.schema = await schemaInventory();
+    ledger.databaseIdentity = await databaseIdentity();
     assert.ok(ledger.policies.find(p => p.policyname === 'line_items_owner_isolation').qual.includes('EXISTS'));
-    if (uuidLocality) {
+    if (uuidLocality || uuidHttp) {
       assert.equal(ledger.schema.defaults.find(c => c.table_name === 'line_items' && c.column_name === 'id').column_default, 'gen_random_uuid()');
       assert.equal((await admin.query('SELECT uuid_extract_version(uuidv7())::int version')).rows[0].version, 7);
     }
     ledger.owners = Array.from({ length: 3 }, () => randomUUID());
     await saveLedger(); prepared = true;
+    if (uuidHttp) {
+      assert.equal((await admin.query("SELECT has_column_privilege('pricing_runtime','line_items','id','INSERT') allowed")).rows[0].allowed, false);
+      ledger.uuidHttpDefault = 'gen_random_uuid()'; await saveLedger();
+    }
     if (uuidLocality) {
       assert.equal((await admin.query("SELECT has_column_privilege('pricing_runtime','line_items','id','INSERT') allowed")).rows[0].allowed, false);
       // Record recovery intent first. Both controls and candidate share this narrow
@@ -256,6 +287,16 @@ try {
     results.workerSettings = (await worker.query("SELECT name,setting FROM pg_settings WHERE name IN ('track_io_timing','jit','statement_timeout')")).rows;
     results.runtimeRls = (await worker.query("SELECT row_security_active('documents') documents, row_security_active('line_items') lines")).rows[0];
     assert.deepEqual(results.runtimeRls, { documents: true, lines: true });
+    if (uuidHttp) {
+      const runtimeProbe = new Pool({ connectionString: runtimeUrl, max: 1 });
+      try {
+        results.httpRuntime = (await runtimeProbe.query(`SELECT current_user,rolsuper,rolbypassrls,
+          row_security_active('documents') documents,row_security_active('line_items') lines,
+          has_column_privilege(current_user,'line_items','id','INSERT') can_insert_id
+          FROM pg_roles WHERE rolname=current_user`)).rows[0];
+        assert.deepEqual(results.httpRuntime, { current_user: 'pricing_runtime', rolsuper: false, rolbypassrls: false, documents: true, lines: true, can_insert_id: false });
+      } finally { await runtimeProbe.end(); }
+    }
     let loaded = 0;
     for (const level of levels) {
       await populateRepresentativeParents({ admin, parents, from: loaded, to: level, onProgress: progress => {
@@ -269,6 +310,17 @@ try {
       for (const source of sources) {
         source.before = (await admin.query('SELECT * FROM line_items WHERE document_id=$1 ORDER BY position', [source.id])).rows;
         source.expectedCopy = source.before.map(row => Object.fromEntries(['position', 'description', 'quantity', 'unit_price_cents', 'discount_cents', 'tax_rate_basis_points', 'finalized_subtotal_cents', 'finalized_taxable_cents', 'finalized_tax_cents', 'finalized_total_cents'].map(k => [k, k.startsWith('finalized_') ? null : row[k]])));
+      }
+      if (uuidHttp) {
+        await measureUuidHttp({ admin, parents, level, samples, request, startServer, stopServer, setVariant: setUuidDefault, inventory,
+          checkInterrupted: () => assert.equal(interrupted, false, 'Interrupted'), results });
+        phase.afterHttp = await inventory();
+        assert.deepEqual(await counts(), phase.counts);
+        assert.deepEqual(await schemaInventory(), ledger.schema);
+        assert.deepEqual(await policies(), ledger.policies);
+        for (const source of sources) assert.deepEqual((await admin.query('SELECT * FROM line_items WHERE document_id=$1 ORDER BY position', [source.id])).rows, source.before);
+        await writeFile(`${output}/results.json`, JSON.stringify(results, null, 2), { mode: 0o600 });
+        continue;
       }
       const retained = [];
       for (let sample = -5; sample < samples; sample++) {
