@@ -9,6 +9,7 @@ import { sessions, users } from '../db/schema.js';
 import { trimUnicodeWhitespace, validateRegistrationFields } from '../shared/auth-validation.js';
 import type { FieldErrors as Fields } from '../shared/types/field-errors.js';
 import type { Clock } from '../shared/types/clock.js';
+import { traceFor, type DuplicationTrace } from './duplication-trace.js';
 
 const SESSION_COOKIE = '__Host-session';
 const SESSION_IDLE_MS = 24 * 60 * 60 * 1000;
@@ -134,12 +135,13 @@ function readSessionToken(cookieHeader: string | undefined): string | undefined 
 }
 
 /** Atomically validate and refresh one cookie session for auth and tenant routes. */
-async function resolveSession(request: Request, clock: Clock): Promise<AuthenticatedUser | undefined> {
+async function resolveSession(request: Request, clock: Clock, trace?: DuplicationTrace): Promise<AuthenticatedUser | undefined> {
   const token = readSessionToken(request.headers.cookie);
   if (!token) return undefined;
 
   const tokenHash = createHash('sha256').update(token).digest('hex');
   const now = clock.now();
+  if (trace) trace.queryCount += 1;
   const refreshed = await db.execute<{ id: string; email: string }>(sql`
     UPDATE sessions AS session
     SET last_activity_at = GREATEST(session.last_activity_at, ${now})
@@ -152,6 +154,7 @@ async function resolveSession(request: Request, clock: Clock): Promise<Authentic
   `);
   const user = refreshed.rows[0];
   if (!user) {
+    if (trace) trace.queryCount += 1;
     await db.delete(sessions).where(eq(sessions.tokenHash, tokenHash));
     return undefined;
   }
@@ -162,7 +165,10 @@ async function resolveSession(request: Request, clock: Clock): Promise<Authentic
 export function requireAuthenticated(clock: Clock): AuthenticatedHandler {
   return async (request, response, next) => {
     try {
-      const user = await resolveSession(request, clock);
+      const trace = traceFor(response);
+      const user = trace
+        ? await trace.measure('auth.session', () => resolveSession(request, clock, trace))
+        : await resolveSession(request, clock);
       if (!user) {
         unauthenticated(response);
         return;

@@ -3,7 +3,7 @@ import { asc, eq } from 'drizzle-orm';
 import { lineItems } from './schema.js';
 import type { TenantTransaction } from './client.types.js';
 import { calculatePricing, MAX_SAFE_AMOUNT } from '../shared/pricing.js';
-import type { ExactAmounts, LinePricingInput } from '../shared/types/pricing.js';
+import type { ExactAmounts, ExactPricing, LinePricingInput } from '../shared/types/pricing.js';
 import type { DocumentSummary } from '../shared/types/api-contracts.js';
 
 export function databaseLineInput(line: LineRow): LinePricingInput & { description: string } {
@@ -82,14 +82,17 @@ export function serializeLineItem(line: LineRow, amounts: ExactAmounts = calcula
   };
 }
 
-export async function serializeDocument(transaction: TenantTransaction, row: DocumentRow) {
-  const lines = await transaction.select().from(lineItems)
-    .where(eq(lineItems.documentId, row.id))
+export async function readDocumentLines(transaction: TenantTransaction, documentId: string): Promise<LineRow[]> {
+  return transaction.select().from(lineItems)
+    .where(eq(lineItems.documentId, documentId))
     .orderBy(asc(lineItems.position), asc(lineItems.id));
+}
+
+export function projectDocument(row: DocumentRow, lines: LineRow[], pricing?: ExactPricing) {
   const finalized = row.status === 'finalized';
-  const pricing = finalized ? undefined : calculatePricing(lines.map(databaseLineInput));
+  const resolvedPricing = finalized ? undefined : pricing ?? calculatePricing(lines.map(databaseLineInput));
   const lineItemsResponse = lines.map((line, index) => serializeLineItem(
-    line, finalized ? lineSnapshot(line) : pricing!.lines[index].amounts,
+    line, finalized ? lineSnapshot(line) : resolvedPricing!.lines[index].amounts,
   ));
   return {
     id: row.id,
@@ -101,8 +104,12 @@ export async function serializeDocument(transaction: TenantTransaction, row: Doc
     updatedAt: row.updatedAt.toISOString(),
     finalizedAt: row.finalizedAt?.toISOString() ?? null,
     lineItems: lineItemsResponse,
-    amounts: jsonAmounts(finalized ? documentSnapshot(row) : pricing!.amounts),
+    amounts: jsonAmounts(finalized ? documentSnapshot(row) : resolvedPricing!.amounts),
   };
+}
+
+export async function serializeDocument(transaction: TenantTransaction, row: DocumentRow) {
+  return projectDocument(row, await readDocumentLines(transaction, row.id));
 }
 
 export function projectDocumentSummaries(rows: DocumentRow[]): DocumentSummary[] {

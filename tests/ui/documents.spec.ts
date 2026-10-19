@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { writeFile } from 'node:fs/promises';
 import { expect, test } from '@playwright/test';
 import { migrationPool } from '../support/db-fixture.js';
 
@@ -457,6 +458,24 @@ test('duplicates a saved draft while source stays open and copy stays editable',
     const openCopy = page.getByRole('link', { name: 'Open copy' });
     await expect(openCopy).toBeVisible();
     await expect(page.getByRole('status').getByRole('link', { name: 'Open copy' })).toBeVisible();
+    if (process.env.VITE_DUPLICATION_TRACE === '1') {
+      await expect.poll(() => page.evaluate(() => {
+        const records = Reflect.get(window, '__duplicationDiagnostics') as Array<{ interaction: string }>;
+        return records.filter(record => record.interaction === 'duplicate').length;
+      })).toBe(1);
+      const diagnostic = await page.evaluate(() => {
+        const records = Reflect.get(window, '__duplicationDiagnostics') as Array<{
+          interaction: string; outcome: string; requestId?: string;
+          stages: Array<{ stage: string }>;
+        }>;
+        return records.find(record => record.interaction === 'duplicate');
+      });
+      expect(diagnostic?.outcome).toBe('success');
+      expect(diagnostic?.stages.map(stage => stage.stage)).toEqual([
+        'invoked', 'fetch.start', 'response.headers', 'body.parsed', 'state.committed', 'frame.boundary',
+      ]);
+      if (process.env.PRICING_DUPLICATION_TRACE === '1') expect(diagnostic?.requestId).toMatch(/^[0-9a-f-]{36}$/i);
+    }
     for (const width of [1440, 390, 320]) {
       await page.setViewportSize({ width, height: 978 });
       const notice = await page.getByRole('status').boundingBox();
@@ -491,6 +510,25 @@ test('duplicates a saved draft while source stays open and copy stays editable',
     await expect(page.getByLabel('Issue date')).toHaveValue(localToday);
     await expect(page.getByLabel('Document name')).toBeEnabled();
     await expect(page.getByRole('button', { name: 'Save changes' })).toBeVisible();
+    if (process.env.VITE_DUPLICATION_TRACE === '1') {
+      await expect.poll(() => page.evaluate(() => {
+        const records = Reflect.get(window, '__duplicationDiagnostics') as Array<{ interaction: string }>;
+        return records.filter(record => record.interaction === 'open-copy').length;
+      })).toBe(1);
+      const diagnostics = await page.evaluate(() => Reflect.get(window, '__duplicationDiagnostics') as Array<{
+        interaction: string; outcome: string; stages: Array<{ stage: string; elapsedMs: number }>;
+      }>);
+      const openDiagnostic = diagnostics.find(record => record.interaction === 'open-copy');
+      expect(openDiagnostic?.outcome).toBe('success');
+      expect(openDiagnostic?.stages.map(stage => stage.stage)).toEqual([
+        'invoked', 'fetch.start', 'response.headers', 'body.parsed', 'state.committed', 'frame.boundary',
+      ]);
+      const diagnosticPath = test.info().outputPath('duplication-diagnostics.json');
+      await writeFile(diagnosticPath, JSON.stringify(diagnostics), { mode: 0o600 });
+      await test.info().attach('duplication-diagnostics.json', {
+        path: diagnosticPath, contentType: 'application/json',
+      });
+    }
 
     const copyResponse = await page.context().request.get(new URL(`/documents/${copyId}`, page.url()).toString());
     expect(copyResponse.status()).toBe(200);

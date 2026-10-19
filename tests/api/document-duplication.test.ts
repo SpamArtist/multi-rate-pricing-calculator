@@ -250,4 +250,31 @@ describe('document duplication', () => {
     const list = await owner.fetch(`${baseUrl}/documents`);
     expect(await list.json()).toMatchObject({ totalItems: 1 });
   });
+
+  it('rolls back the new document and lines when copied pricing exceeds the safe range', async () => {
+    const client = await signedInClient('document-duplication-rollback@example.com');
+    const source = await createDocument(client, 'Unsafe copied inputs');
+    const session = await client.fetch(`${baseUrl}/auth/session`).then(response => response.json()) as { user: { id: string } };
+    await withOwner(session.user.id, connection => connection.query(`
+      INSERT INTO line_items (document_id, position, description, quantity, unit_price_cents,
+        discount_cents, tax_rate_basis_points)
+      VALUES ($1, 1, 'Large synthetic input', 9007199254740991, 2, 0, 0)
+    `, [source.id]));
+
+    const response = await client.fetch(
+      `${baseUrl}/documents/${source.id}/duplicate`, jsonRequest('POST', { issueDate: '2026-11-02' }),
+    );
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: { code: 'internal_error', message: 'Request failed.' } });
+    const remaining = await withOwner(session.user.id, connection => connection.query(
+      'SELECT id FROM documents ORDER BY id',
+    ));
+    expect(remaining.rows).toEqual([{ id: source.id }]);
+    const sourceLines = await withOwner(session.user.id, connection => connection.query(
+      'SELECT document_id, quantity, unit_price_cents FROM line_items',
+    ));
+    expect(sourceLines.rows).toEqual([{
+      document_id: source.id, quantity: '9007199254740991', unit_price_cents: '2',
+    }]);
+  });
 });

@@ -12,10 +12,18 @@ import {
   restoreEditor, storeEditorLines, storeEditorValues,
 } from './storage.js';
 import { createDraftSaver } from './saveDraft.js';
+import {
+  beginDuplicationDiagnostic, finishDuplicationDiagnostic, markDuplicationDiagnostic,
+  setDuplicationResponse, takeOpenCopyDiagnostic,
+} from './duplication-diagnostics.js';
+import type { DuplicationBrowserAction } from './duplication-diagnostics.types.js';
 
 export function useDocumentEditor({ owner, documentId: routeDocumentId, onAuthExpired }: DocumentEditorProps) {
   // The route may gain a server ID; the live editor and saver still own this session.
   const [initialDocumentId] = React.useState(routeDocumentId);
+  const [openCopyDiagnostic] = React.useState(() => initialDocumentId ? takeOpenCopyDiagnostic() : undefined);
+  const duplicateDiagnostic = React.useRef<DuplicationBrowserAction | undefined>(undefined);
+  const openCopyCommitted = React.useRef(false);
   const [document, setDocument] = React.useState<DocumentData | null>(null);
   const documentId = document?.id ?? initialDocumentId;
   const [values, setValues] = React.useState<DocumentValues | null>(() => initialDocumentId
@@ -42,15 +50,21 @@ export function useDocumentEditor({ owner, documentId: routeDocumentId, onAuthEx
   React.useEffect(() => {
     if (!initialDocumentId) return;
     let active = true;
+    markDuplicationDiagnostic(openCopyDiagnostic, 'fetch.start');
     void fetch(`/documents/${encodeURIComponent(initialDocumentId)}`)
       .then(async response => {
+        markDuplicationDiagnostic(openCopyDiagnostic, 'response.headers');
+        setDuplicationResponse(openCopyDiagnostic, response);
         if (response.status === 401) {
+          finishDuplicationDiagnostic(openCopyDiagnostic, 'auth-expired');
           onAuthExpired();
           return null;
         }
         if (response.status === 404) throw new Error('Document not found.');
         if (!response.ok) throw new Error((await responseError(response)).message ?? 'Could not load this document.');
-        return response.json() as Promise<DocumentData>;
+        const result = await response.json() as DocumentData;
+        markDuplicationDiagnostic(openCopyDiagnostic, 'body.parsed');
+        return result;
       })
       .then(result => {
         if (!active || !result) return;
@@ -65,11 +79,35 @@ export function useDocumentEditor({ owner, documentId: routeDocumentId, onAuthEx
         }
       })
       .catch((reason: unknown) => {
+        finishDuplicationDiagnostic(openCopyDiagnostic, 'error');
         if (active) setLoadError(reason instanceof Error ? reason.message : 'Could not load this document.');
       })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [initialDocumentId, onAuthExpired, owner.id]);
+  }, [initialDocumentId, onAuthExpired, openCopyDiagnostic, owner.id]);
+
+  React.useEffect(() => {
+    if (!document || !openCopyDiagnostic || openCopyCommitted.current) return;
+    openCopyCommitted.current = true;
+    markDuplicationDiagnostic(openCopyDiagnostic, 'state.committed');
+    const frame = requestAnimationFrame(() => {
+      markDuplicationDiagnostic(openCopyDiagnostic, 'frame.boundary');
+      finishDuplicationDiagnostic(openCopyDiagnostic, 'success');
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [document, openCopyDiagnostic]);
+
+  React.useEffect(() => {
+    if (!duplicateCopyId || message !== 'Draft duplicated.' || !duplicateDiagnostic.current) return;
+    const action = duplicateDiagnostic.current;
+    duplicateDiagnostic.current = undefined;
+    markDuplicationDiagnostic(action, 'state.committed');
+    const frame = requestAnimationFrame(() => {
+      markDuplicationDiagnostic(action, 'frame.boundary');
+      finishDuplicationDiagnostic(action, 'success');
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [duplicateCopyId, message]);
 
   const localErrors = values ? documentFieldErrors(values) : {};
   const linePreviews = lines.map(line => previewLine(line, document?.status === 'finalized'));
@@ -192,21 +230,31 @@ export function useDocumentEditor({ owner, documentId: routeDocumentId, onAuthEx
 
   async function duplicateDocument(): Promise<void> {
     if (!documentId || !document || pending) return;
+    const diagnostic = beginDuplicationDiagnostic('duplicate');
+    duplicateDiagnostic.current = diagnostic;
     setPending(true);
     setMessage('');
     setDuplicateCopyId(null);
     try {
+      markDuplicationDiagnostic(diagnostic, 'fetch.start');
       const response = await fetch(`/documents/${encodeURIComponent(documentId)}/duplicate`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ issueDate: localToday() }),
       });
+      markDuplicationDiagnostic(diagnostic, 'response.headers');
+      setDuplicationResponse(diagnostic, response);
       if (response.status === 401) {
+        finishDuplicationDiagnostic(diagnostic, 'auth-expired');
+        duplicateDiagnostic.current = undefined;
         onAuthExpired();
         return;
       }
       const result = await response.json() as DocumentData | { error?: { message?: string } };
+      markDuplicationDiagnostic(diagnostic, 'body.parsed');
       if (!response.ok) {
+        finishDuplicationDiagnostic(diagnostic, 'error');
+        duplicateDiagnostic.current = undefined;
         setMessage((result as { error?: { message?: string } }).error?.message ?? 'Could not duplicate this document.');
         return;
       }
@@ -214,6 +262,8 @@ export function useDocumentEditor({ owner, documentId: routeDocumentId, onAuthEx
       setDuplicateCopyId(copy.id);
       setMessage('Draft duplicated.');
     } catch {
+      finishDuplicationDiagnostic(diagnostic, 'error');
+      duplicateDiagnostic.current = undefined;
       setMessage('Connection failed. Source document stays open. Try again.');
     } finally {
       setPending(false);
