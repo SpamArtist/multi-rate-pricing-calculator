@@ -18,3 +18,19 @@
 - Keep commit description details focused only on files included in that commit.
 - If any detail is uncertain, state assumptions explicitly in the commit description.
 - Do not ask for permission for `git add` or `git commit` to create a commit.
+
+## Test guidance
+
+Write generated test output to ignored `test-results/` or `.artifacts/`. See `CODING_STANDARDS.md` when reviewing tests. CI checks generated evidence and direct prototype references with `scripts/check-generated-evidence.sh` and `scripts/check-test-isolation.sh`.
+
+For issue verification and check documentation, see `docs/agents/verification-records.md`.
+
+## Backend architecture
+
+Before changing `src/server/` or `src/db/`, read `docs/agents/backend-architecture.md` for the HTTP, use-case, persistence, and tenant-transaction seams.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues is the canonical issue tracker and Wayfinder map. See `docs/agents/issue-tracker.md`.

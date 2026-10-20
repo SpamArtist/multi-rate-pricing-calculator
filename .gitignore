@@ -150,3 +150,11 @@ vite.config.ts.timestamp-*
 
 
 .DS_Store
+.local/
+playwright-report/
+test-results/
+.artifacts/
+docs/evidence/
+output/pdf/
+.scratch
+prototype

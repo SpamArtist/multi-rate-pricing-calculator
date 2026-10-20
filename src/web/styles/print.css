@@ -1,0 +1,149 @@
+/* Text mirrors let paper output wrap values that single-line inputs would clip. */
+.print-value {
+  display: none;
+}
+
+@media print {
+  @page {
+    margin: 14mm;
+  }
+
+  html,
+  body,
+  .app-frame {
+    min-block-size: auto;
+    background: oklch(1 0 none);
+    color: oklch(0 0 none);
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .app-topbar,
+  .back-link,
+  .line-actions,
+  .ledger-page input,
+  button,
+  .request-error,
+  .document-notice,
+  .document-save-actions,
+  .success-message {
+    display: none !important;
+  }
+
+  .ledger-page {
+    max-inline-size: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .field label,
+  .section-label,
+  .line-index,
+  .line-math,
+  .calculation-note,
+  .snapshot-note,
+  .amount-list dt {
+    color: oklch(0.28 0 none) !important;
+  }
+
+  /* Paper uses the Ledger's compact tablet composition, independent of screen size. */
+  .editor-heading {
+    grid-template-columns: minmax(0, 1fr) auto;
+    break-after: avoid;
+  }
+
+  .editor-actions {
+    justify-content: end;
+  }
+
+  .metadata-fields {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .print-value {
+    display: block;
+    min-block-size: 2.1875rem;
+    padding-block: 0.48rem;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+    font-size: 0.8rem;
+    font-weight: 570;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .line-description .print-value {
+    font-size: 0.84rem;
+    font-weight: 690;
+  }
+
+  /* Block flow keeps printed rows together without unused action columns. */
+  .line-item {
+    display: block;
+  }
+
+  .line-header {
+    margin-block-end: 0.6125rem;
+  }
+
+  .line-fields {
+    grid-template-columns: minmax(0, 0.55fr) repeat(3, minmax(0, 1fr)) minmax(0, 0.9fr);
+  }
+
+  .line-sum {
+    grid-column: auto;
+  }
+
+  .line-math {
+    margin-block-start: 0.78rem;
+    font-size: 0.6825rem;
+  }
+
+  .line-index {
+    inline-size: 1.575rem;
+    font-size: 0.63rem;
+  }
+
+  .breakdown {
+    display: block;
+  }
+
+  .breakdown .section-heading {
+    margin-block-end: 0.25rem;
+  }
+
+  .amount-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6125rem;
+  }
+
+  .amount-list > div {
+    flex-direction: row;
+    justify-content: space-between;
+  }
+
+  .grand-total {
+    flex-direction: row;
+    align-items: baseline;
+    justify-content: space-between;
+    padding-block: 0.875rem;
+    margin-block-start: 1.05rem;
+    border-block: 1px solid var(--line);
+  }
+
+  .calculation-note,
+  .snapshot-note {
+    margin-block-start: 0.525rem;
+    text-align: start;
+  }
+
+  .section-heading {
+    break-after: avoid;
+  }
+
+  .line-item,
+  .breakdown {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+}

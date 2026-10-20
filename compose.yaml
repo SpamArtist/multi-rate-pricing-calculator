@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: pricing_bootstrap
+      POSTGRES_PASSWORD: pricing_bootstrap
+      POSTGRES_DB: pricing
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pricing-data:/var/lib/postgresql
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pricing_bootstrap -d pricing"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  pricing-data:

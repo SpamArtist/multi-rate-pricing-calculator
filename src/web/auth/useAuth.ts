@@ -1,0 +1,182 @@
+import type { RegistrationValues, AuthMode, AuthOperation, AuthSession } from './useAuth.types.js';
+import React from 'react';
+import { validateRegistrationFields } from '../../shared/auth-validation.js';
+import type { User } from '../../shared/types/api-contracts.js';
+import type { FieldErrors } from '../../shared/types/field-errors.js';
+import { responseError } from '../api/client.js';
+import { clearUserEditorValues } from '../editor/storage.js';
+import { navigate } from '../routing.js';
+
+export function useAuth() {
+  const [session, setSession] = React.useState<AuthSession>({ user: null, generation: 0 });
+  const currentGeneration = React.useRef(0);
+  const user = session.user;
+  const [sessionChecked, setSessionChecked] = React.useState(false);
+  const [mode, setMode] = React.useState<AuthMode>('sign-in');
+  const [authValues, setAuthValues] = React.useState<RegistrationValues>({ email: '', password: '' });
+  const [touched, setTouched] = React.useState<Partial<Record<keyof RegistrationValues, boolean>>>({});
+  const [authSubmitted, setAuthSubmitted] = React.useState(false);
+  const [serverAuthErrors, setServerAuthErrors] = React.useState<Partial<Record<keyof RegistrationValues, string>>>({});
+  const [authMessage, setAuthMessage] = React.useState('');
+  const [sessionError, setSessionError] = React.useState('');
+  const [pendingOperation, setPendingOperation] = React.useState<AuthOperation | null>(null);
+  const operationInFlight = React.useRef(false);
+
+  const replaceSession = React.useCallback((nextUser: User | null): void => {
+    // Invalidate old request callbacks immediately, before React renders the new session.
+    currentGeneration.current += 1;
+    setSession({ user: nextUser, generation: currentGeneration.current });
+  }, []);
+
+  function beginOperation(operation: AuthOperation): boolean {
+    // All auth mutations share a cookie. Serialize requests even before React rerenders.
+    if (operationInFlight.current) return false;
+    operationInFlight.current = true;
+    setPendingOperation(operation);
+    return true;
+  }
+
+  function finishOperation(): void {
+    operationInFlight.current = false;
+    setPendingOperation(null);
+  }
+
+  React.useEffect(() => {
+    let active = true;
+    void fetch('/auth/session')
+      .then(async response => {
+        if (!response.ok) return null;
+        const result = await response.json() as { user: User };
+        return result.user;
+      })
+      .catch(() => null)
+      .then(foundUser => {
+        if (!active) return;
+        replaceSession(foundUser);
+        setSessionChecked(true);
+      });
+    return () => { active = false; };
+  }, [replaceSession]);
+
+  const onAuthExpired = React.useCallback(() => {
+    if (!session.user || session.generation !== currentGeneration.current) return;
+    replaceSession(null);
+    setSessionError('');
+    setMode('sign-in');
+    setAuthMessage('Your session expired. Sign in to resume editing.');
+  }, [session, replaceSession]);
+
+  async function authenticate(event: React.FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    setAuthSubmitted(true);
+    const { fields: localErrors } = validateRegistrationFields(authValues.email, authValues.password);
+    if (localErrors.email || localErrors.password) return;
+
+    if (!beginOperation(mode)) return;
+    setAuthMessage('');
+    setServerAuthErrors({});
+    try {
+      const response = await fetch(mode === 'sign-in' ? '/auth/sign-in' : '/auth/sign-up', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: authValues.email, password: authValues.password }),
+      });
+      const result = await response.json() as { user?: User; error?: { message?: string; fields?: FieldErrors } };
+      if (!response.ok) {
+        setServerAuthErrors({
+          email: result.error?.fields?.email,
+          password: result.error?.fields?.password,
+        });
+        setAuthMessage(result.error?.message ?? (mode === 'sign-in'
+          ? 'Could not sign in. Try again.'
+          : 'Could not create your account. Try again.'));
+        return;
+      }
+      if (result.user) {
+        replaceSession(result.user);
+        setSessionError('');
+        setAuthValues(current => ({ ...current, password: '' }));
+        setAuthMessage('');
+      }
+    } catch {
+      setAuthMessage('Connection failed. Check your network and try again.');
+    } finally {
+      finishOperation();
+    }
+  }
+
+  async function signOut(): Promise<void> {
+    if (!beginOperation('sign-out')) return;
+    setSessionError('');
+    try {
+      const response = await fetch('/auth/logout', { method: 'POST' });
+      if (!response.ok) {
+        const error = await responseError(response);
+        if (response.status === 401) onAuthExpired();
+        else setSessionError(error.message ?? 'Could not sign out. Try again.');
+        return;
+      }
+      if (user) clearUserEditorValues(user.id);
+      replaceSession(null);
+      setMode('sign-in');
+      setAuthMessage('');
+      setAuthValues({ email: '', password: '' });
+      setTouched({});
+      setAuthSubmitted(false);
+      navigate('/documents');
+    } catch {
+      setSessionError('Connection failed. Check your network and try again.');
+    } finally {
+      finishOperation();
+    }
+  }
+
+  function changeAuthField(field: keyof RegistrationValues, value: string): void {
+    setAuthValues(current => ({ ...current, [field]: value }));
+    setTouched(current => ({ ...current, [field]: true }));
+    setServerAuthErrors({});
+    setAuthMessage('');
+  }
+
+  function changeMode(nextMode: AuthMode): void {
+    setMode(nextMode);
+    setTouched({});
+    setAuthSubmitted(false);
+    setServerAuthErrors({});
+    setAuthMessage('');
+  }
+
+  const { fields: localAuthErrors } = validateRegistrationFields(authValues.email, authValues.password);
+  const fieldErrors = {
+    email: serverAuthErrors.email ?? localAuthErrors.email,
+    password: serverAuthErrors.password ?? localAuthErrors.password,
+  };
+  const showEmailError = authSubmitted || touched.email;
+  const showPasswordError = authSubmitted || touched.password;
+
+  function touchAuthField(field: keyof RegistrationValues): void {
+    setTouched(current => ({ ...current, [field]: true }));
+  }
+
+  return {
+    user,
+    sessionChecked,
+    sessionError,
+    signOutPending: pendingOperation === 'sign-out',
+    onAuthExpired,
+    signOut,
+    form: {
+      mode,
+      authValues,
+      authMessage,
+      pendingOperation,
+      fieldErrors,
+      showEmailError,
+      showPasswordError,
+      authenticate,
+      changeAuthField,
+      touchAuthField,
+      changeMode,
+    },
+  };
+}
