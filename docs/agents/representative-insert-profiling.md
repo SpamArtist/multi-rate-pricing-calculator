@@ -1,6 +1,6 @@
 # Investigate insertion cost at a larger data footprint
 
-`node scripts/profile-representative-insert.mjs` loads an empty disposable database, measures the unchanged duplication insert and actual HTTP endpoint, and removes its fixtures. It never installs the scalar policy, applies migrations, changes column statistics options, or edits product code. The default mode preserves schema throughout; opt-in UUID HTTP and serial modes make narrowly scoped disposable schema changes with restoration described below.
+`node scripts/profile-representative-insert.mjs` loads an empty disposable database, measures the unchanged duplication insert and actual HTTP endpoint, and removes its fixtures. It never installs the scalar policy, applies migrations, changes indexes, changes column statistics options, or edits product code.
 
 Use only an empty, already migrated `127.0.0.1:5433/pricing` without other traffic. Database URL guards reject other addresses. The shared profiler advisory lock excludes cooperating profilers. Defaults use the repository's local bootstrap and runtime credentials; override `REPRESENTATIVE_DATABASE_URL` and `REPRESENTATIVE_RUNTIME_URL` if needed. HTTP port 4194 must be unused. Runtime privileges and active table RLS are asserted. Existing duplication tracing must be available in the working tree for the diagnostic HTTP pass; source/bundle hashes identify the exact code measured.
 
@@ -16,7 +16,6 @@ Options:
 - `REPRESENTATIVE_SAMPLES`: 5–100 plain SQL and trace-disabled HTTP samples per case; default 20.
 - `REPRESENTATIVE_UUID_LOCALITY=1`: replace the baseline SQL/HTTP measurement phase with the paired UUID locality experiment described below. No HTTP candidate is exercised in this mode.
 - `REPRESENTATIVE_UUID_HTTP=1`: run the endpoint/concurrency experiment below. Mutually exclusive with the SQL locality mode.
-- `REPRESENTATIVE_SERIAL_COSTS=1`: run the serial decomposition below; mutually exclusive with both UUID modes.
 
 The host filesystem must have at least 7 GiB free initially. Each committed 50-parent load batch checks a 5 GiB reserve. These are host free-space guards, not a guarantee about the container filesystem or future WAL growth. The level cap bounds fixture growth. Stop the process gracefully if other work consumes space.
 
@@ -99,29 +98,3 @@ Copies remain live across both passes, so report initial and final counts and in
 Cleanup stops the app before restoration. Under the fixture cleanup lock it verifies owner IDs/email markers and database identity before restoring defaults or permissions. It checks the restored schema before truncating the owned fixture. Replaying a clean ledger refuses a changed schema; unrelated owners are rejected before restoration. The same `--cleanup` command handles ordinary, error and interrupted runs. Validate crash recovery after UUIDv7 activation and repeat recovery to confirm idempotence. The report command rejects runs with errors or unverified restoration.
 
 If measurement finished but cleanup failed, retain the original result unchanged. After successful ledger recovery, the reporter can accept the recovery run's `results.json` as a second argument. It requires the matching original run ID, no recovery errors, restored schema/policies and zero fixture counts, and explicitly records the original cleanup failure. Recovery establishes final state, not unbiased performance: storage-pressure runs require a separate timing caveat or a repeat with adequate headroom.
-
-## Isolate serial insertion costs
-
-```sh
-REPRESENTATIVE_SERIAL_COSTS=1 REPRESENTATIVE_LEVELS=2504 REPRESENTATIVE_SAMPLES=36 node scripts/profile-representative-insert.mjs
-node scripts/profile-serial-costs-report.mjs .artifacts/representative-insert-RUN-ID/results.json
-```
-
-Use this only on the guarded, empty disposable database with no other traffic. The mode uses its existing bootstrap connection to run rollback-only diagnostic transactions against the real fixture table. It never commits an altered default, index, constraint, trigger or policy, and does not apply migrations or edit the app. It requires PostgreSQL 18 and the current two-index, one-FK, nine-CHECK line schema. The database filesystem check uses a fixed read-only `df` command through `COPY FROM PROGRAM`, requires the known `/var/lib/postgresql/` data-directory prefix and 1 GiB initially, and checks a 600 MiB reserve before each load batch and after each measured round. The ordinary host checks still apply. Smaller levels reduce the cache footprint; preserve that limitation in interpretation.
-
-For each draft337/finalized411 source and UUIDv4/v7, measure these arms:
-
-- Exact endpoint insert, using a transaction-local default.
-- Preloaded source with the same destination columns and no RETURNING. Source materialization happens under runtime RLS outside timing. This removes source authorization, reads and row numbering together.
-- Preloaded source with RETURNING, the common baseline for all ablations. Returning values allows verification without a background-heap scan when the document-position index is absent. Its overhead has its own control above.
-- Individually disabled FK INSERT trigger, removed CHECKs, removed primary-key constraint/index, or removed document-position unique constraint/index.
-- Privileged-role comparison using the staged input; this is a role/RLS-bypass sensitivity, not a pure policy clock.
-- Combined floor without those indexes, FK/CHECKs or RLS. It still includes heap/WAL, UUID generation, NOT NULL checks, executor, RETURNING and client transport.
-
-Each rollback arm takes the same exclusive line-table lock. DDL, source staging, tenant binding, source lock and parent creation are outside the insertion timer. Actual runtime arms assert active RLS; the bypass role is explicitly verified. Policies are not rewritten. The FK trigger is selected from live catalogs by its constraint OID and INSERT event, preserving other triggers. Constraints are dropped without CASCADE. Rollback restores the existing indexes without rebuilding them; catalog OIDs/definitions, trigger states, RLS flags, defaults and table/column ACLs must match after every trial. Returned plain samples verify ordered inputs, cleared snapshots, UUID version and fresh IDs; EXPLAIN samples assert returned row counts. Exact/preloaded arms verify stored copies before rollback. Source snapshots and total counts match after the phase.
-
-Use 36 plain rounds to cover every position in the 18-cell schedule in both forward and reverse order. Separate TIMING OFF/ON passes collect four rounds each, preceded by two warmups. Those smaller plan passes have diagnostic ordering coverage, not full position balance. Unmodified committed UUIDv4 anchors bracket the rollback phase, with COMMIT measured immediately after the insert; committed copies are verified then deleted outside timing. Read-only runtime/privileged source plans further distinguish source work from destination work.
-
-A separate read-only generator probe compares UUIDv4, UUIDv7 and a NULL-projection control over 337/411 rows, with 36 rounds covering all six arm permutations. It measures executor/generator work without row insertion, indexes or WAL; do not subtract its timing directly from the insertion measurements.
-
-Show paired differences, both halves, all outliers, source plans, FK aggregate trigger times, buffer I/O and WAL volume. Differences are non-additive sensitivities. Rollback preserves logical state but leaves physical dead tuples/index entries, WAL and cache effects; record drift and maintenance. The smaller fixture can choose a different ownership plan and fit more index pages in cache. Neither WAL byte counts nor the combined floor isolate WAL CPU from heap/executor work. Do not switch the populated table to UNLOGGED or infer durable commit latency from rollback trials. Report unsupported attribution explicitly instead of assigning every millisecond a cause.

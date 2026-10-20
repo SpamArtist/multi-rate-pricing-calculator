@@ -75,12 +75,11 @@ export async function createRepresentativeParents({ admin, owners }) {
 // ranges such as [4, 1000) and [1000, 10000). Existing lines are rejected.
 // Empty parents already have the intended state, with zero finalized snapshots
 // where applicable; population fills their matching inputs and monetary totals.
-export async function populateRepresentativeParents({ admin, parents, from, to, onProgress, beforeBatch }) {
+export async function populateRepresentativeParents({ admin, parents, from, to, onProgress }) {
   assert.ok(Number.isInteger(from) && Number.isInteger(to) && from >= 0 && to >= from && to <= parents.length);
   let completedParents = 0;
   let insertedLines = 0;
   for (let offset = from; offset < to; offset += batchSize) {
-    await beforeBatch?.();
     const freeBytes = await checkFreeSpace();
     const batch = parents.slice(offset, Math.min(offset + batchSize, to));
     for (const [index, parent] of batch.entries()) {
