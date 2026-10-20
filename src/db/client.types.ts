@@ -6,11 +6,4 @@ export type TenantTransaction = NodePgTransaction<typeof schema, ExtractTablesWi
 
 export type TenantOperation<T> = (transaction: TenantTransaction) => Promise<T>;
 
-export type TenantTransactionObserver = {
-  onEntry(): void;
-  onBindStart(): void;
-  onBindEnd(error?: unknown): void;
-  onCallbackEnd(): void;
-};
-
-export type TenantTransactionOptions = { consistentRead?: boolean; observer?: TenantTransactionObserver };
+export type TenantTransactionOptions = { consistentRead?: boolean };

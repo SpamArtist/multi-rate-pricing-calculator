@@ -5,7 +5,6 @@ import { navigate } from '../routing.js';
 import { LineItem } from './LineItem.js';
 import { useDocumentEditor } from './useDocumentEditor.js';
 import type { DocumentEditorProps } from './useDocumentEditor.types.js';
-import { beginOpenCopyDiagnostic } from './duplication-diagnostics.js';
 
 export function DocumentEditor(props: DocumentEditorProps): React.JSX.Element {
   const {
@@ -28,7 +27,7 @@ export function DocumentEditor(props: DocumentEditorProps): React.JSX.Element {
     <>
     {message && successMessage && <p className="document-notice" role="status">
       {message}
-      {duplicateCopyId && message === 'Draft duplicated.' && <> <a href={`#/documents/${encodeURIComponent(duplicateCopyId)}`} onClick={beginOpenCopyDiagnostic}>Open copy →</a></>}
+      {duplicateCopyId && message === 'Draft duplicated.' && <> <a href={`#/documents/${encodeURIComponent(duplicateCopyId)}`}>Open copy →</a></>}
     </p>}
     <main className="ledger-page" data-testid="document-editor">
       <button className="back-link" type="button" onClick={() => navigate('/documents')}><PrototypeIcon name="back" />All documents</button>

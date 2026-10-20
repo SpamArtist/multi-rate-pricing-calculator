@@ -16,7 +16,7 @@ import {
   MAX_SAFE_AMOUNT,
 } from '../shared/pricing.js';
 import { databaseLineInput, serializeDocument, serializeLineItem } from '../db/document-projection.js';
-import { writeDraftAmounts } from '../db/draft-amount-persistence.js';
+import { readDraftLineInputs, writeDraftAmounts } from '../db/draft-amount-persistence.js';
 import { listDocumentsHandler } from './http/document-list.js';
 import type { Clock } from '../shared/types/clock.js';
 import { replaceDraftLines, writeLineSnapshots } from '../db/line-set-persistence.js';
@@ -26,8 +26,6 @@ import {
   parseAmount, parseCustomerName, parseDescription, parseIssueDate, parsePosition, parseQuantity,
   parseTaxRate, parseTitle, parseUuid, rejectUnknownFields,
 } from './document-input.js';
-import { measureDuplicationSync, traceFor } from './duplication-trace.js';
-import { duplicateDocument } from './duplicate-document.js';
 
 function parseFields(body: unknown, allowed: readonly string[], required: readonly string[] = []): { fields: Fields; values?: Partial<DocumentFields> } {
   const fields = createFields();
@@ -306,8 +304,6 @@ export function createDocumentsRouter(clock: Clock): Router {
   });
 
   router.post('/:id/duplicate', json({ limit: '64kb' }), async (request, response: AuthenticatedResponse, next) => {
-    const trace = traceFor(response);
-    const validateStart = trace ? performance.now() : 0;
     const fields = Object.create(null) as Fields;
     const body = request.body === undefined ? {} : request.body;
     if (!isRecord(body)) {
@@ -321,13 +317,11 @@ export function createDocumentsRouter(clock: Clock): Router {
         fields.issueDate = 'Enter a valid calendar date.';
       }
     }
-    const sourceId = parseUuid(request.params.id);
-    trace?.add('duplicate.validate', validateStart);
     if (Object.keys(fields).length > 0) {
       sendValidation(response, fields);
       return;
     }
-    if (!sourceId) {
+    if (!parseUuid(request.params.id)) {
       sendNotFound(response);
       return;
     }
@@ -335,12 +329,40 @@ export function createDocumentsRouter(clock: Clock): Router {
     const ownerId = response.locals.ownerId;
     const issueDate = (body as { issueDate: string }).issueDate;
     try {
-      const duplicate = await duplicateDocument(ownerId, sourceId, issueDate, trace);
+      const duplicate = await withTenantTransaction(ownerId, async transaction => {
+        const [source] = await transaction.select().from(documents)
+          .where(eq(documents.id, request.params.id))
+          .for('update')
+          .limit(1);
+        if (!source) return undefined;
+
+        const inserted = await transaction.execute<{ id: string }>(sql`
+          INSERT INTO documents (owner_id, title, customer_name, issue_date)
+          VALUES (${ownerId}, ${source.title.trim()}, ${source.customerName.trim()}, ${issueDate})
+          RETURNING id
+        `);
+        const copyId = inserted.rows[0].id;
+        await transaction.execute(sql`
+          INSERT INTO line_items (
+            document_id, position, description, quantity, unit_price_cents, discount_cents, tax_rate_basis_points
+          )
+          SELECT ${copyId}, row_number() OVER (ORDER BY position, id), description, quantity,
+            unit_price_cents, discount_cents, tax_rate_basis_points
+          FROM line_items WHERE document_id = ${source.id}
+        `);
+        const [copy] = await transaction.select().from(documents)
+          .where(eq(documents.id, copyId))
+          .limit(1);
+        const copiedPricing = calculatePricing(await readDraftLineInputs(transaction, copyId));
+        if (!copiedPricing.withinSafeRange) throw new RangeError('Copied draft amounts exceed the safe integer range.');
+        await writeDraftAmounts(transaction, copyId, copiedPricing.amounts);
+        return serializeDocument(transaction, copy);
+      });
       if (!duplicate) {
         sendNotFound(response);
         return;
       }
-      measureDuplicationSync(trace, 'response.encode_send', () => response.status(201).json(duplicate));
+      response.status(201).json(duplicate);
     } catch (error) {
       next(error);
     }

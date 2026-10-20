@@ -8,7 +8,6 @@ import { draftSaveHandler } from './http/draft-save.js';
 import { createReportsRouter } from './reports.js';
 import { systemClock } from './clock.js';
 import type { Clock } from '../shared/types/clock.js';
-import { duplicationTraceMiddleware } from './duplication-trace.js';
 
 export function createApp(
   databaseCheck: DatabaseCheck = checkDatabase,
@@ -17,7 +16,6 @@ export function createApp(
 ): Express {
   const app = express();
 
-  app.use(duplicationTraceMiddleware);
   app.use(requireSameOriginForCookieMutations);
   app.use('/auth', createAuthRouter(clock, options.signupRateLimit, options.signinRateLimit));
   app.post('/documents/draft-save', ...draftSaveHandler(clock));

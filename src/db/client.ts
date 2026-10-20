@@ -22,20 +22,8 @@ export async function withTenantTransaction<T>(
   if (!uuidPattern.test(ownerId)) throw new TypeError('Authenticated owner ID must be a UUID.');
 
   return db.transaction(async transaction => {
-    options?.observer?.onEntry();
-    options?.observer?.onBindStart();
-    try {
-      await transaction.execute(sql`select set_config('app.user_id', ${ownerId}, true)`);
-      options?.observer?.onBindEnd();
-    } catch (error) {
-      options?.observer?.onBindEnd(error);
-      throw error;
-    }
-    try {
-      return await operation(transaction);
-    } finally {
-      options?.observer?.onCallbackEnd();
-    }
+    await transaction.execute(sql`select set_config('app.user_id', ${ownerId}, true)`);
+    return operation(transaction);
   }, options?.consistentRead ? { isolationLevel: 'repeatable read' } : undefined);
 }
 
