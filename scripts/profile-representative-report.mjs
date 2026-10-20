@@ -4,7 +4,6 @@ import process from 'node:process';
 const input = process.argv[2];
 assert.ok(input, 'Usage: node scripts/profile-representative-report.mjs results.json');
 const results = JSON.parse(await readFile(input, 'utf8'));
-assert.notEqual(results.experiment, 'uuid-locality', 'Use profile-uuid-locality-report.mjs for paired UUID runs');
 assert.ok(!results.error && results.policyUnchanged && !results.cleanupError, 'Run did not complete cleanly');
 const med = values => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
 const summaryOf = values => ({ n: values.length, median: +med(values).toFixed(3), min: Math.min(...values), max: Math.max(...values) });
