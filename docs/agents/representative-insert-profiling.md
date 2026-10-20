@@ -15,7 +15,6 @@ Options:
 - `REPRESENTATIVE_LEVELS`: increasing populated-parent counts, 4–20,004; default `1004,10004`. Use `4` for a small smoke run or `10004` for one approximately 3.75-million-line stage.
 - `REPRESENTATIVE_SAMPLES`: 5–100 plain SQL and trace-disabled HTTP samples per case; default 20.
 - `REPRESENTATIVE_UUID_LOCALITY=1`: replace the baseline SQL/HTTP measurement phase with the paired UUID locality experiment described below. No HTTP candidate is exercised in this mode.
-- `REPRESENTATIVE_UUID_HTTP=1`: run the endpoint/concurrency experiment below. Mutually exclusive with the SQL locality mode.
 
 The host filesystem must have at least 7 GiB free initially. Each committed 50-parent load batch checks a 5 GiB reserve. These are host free-space guards, not a guarantee about the container filesystem or future WAL growth. The level cap bounds fixture growth. Stop the process gracefully if other work consumes space.
 
@@ -73,28 +72,3 @@ Five warmup rounds precede measurement. Six permutations counterbalance the thre
 Committed copies stay live through the measurement phase so the UUIDv7 key range grows. Every copy must preserve ordered inputs, clear finalized snapshots, have the expected UUID version and fresh unique IDs, and pass the existing database constraints under active runtime RLS. The copies are removed after timing; complete source-line snapshots, fixture counts, policies, defaults, index definitions, constraints and restored column ACLs must match. Generated evidence records fixture growth and maintenance statistics. Recovery uses the same ledger command above.
 
 This is a serial SQL experiment, not a migration, endpoint improvement claim or concurrent-throughput test. UUIDv7 should cluster writes around a narrow timestamp range even while old UUIDv4 keys remain; it does not make arbitrary old-key reads local. Assess generation-time disclosure and concurrent writer contention before adoption. A bounded fixture cannot predict the exact gain at a larger storage/cache footprint.
-
-## Validate UUIDv7 through HTTP and concurrent writes
-
-```sh
-REPRESENTATIVE_UUID_HTTP=1 REPRESENTATIVE_LEVELS=10004 REPRESENTATIVE_SAMPLES=24 node scripts/profile-representative-insert.mjs
-node scripts/profile-uuid-http-report.mjs .artifacts/representative-insert-RUN-ID/results.json
-```
-
-This mode keeps the compiled endpoint and its runtime privileges unchanged. It temporarily switches **only the disposable `line_items.id` default** between `gen_random_uuid()` and `uuidv7()`. No migration runner or migration file is used. The normal insert omits `id`, so the real endpoint receives the selected database default. Source IDs and parent defaults remain UUIDv4; the scalar ownership policy is not installed. The ledger records the original default and database identity before any default change. Every switch checks all other defaults, constraints, index definitions, column ACLs and policies. DDL runs outside request timing, only after preceding requests settle, with a three-second lock timeout.
-
-Check free space on the database's actual filesystem before a large run; host free space alone is insufficient. Budget for the background fixture, retained copies, WAL and cleanup. Use a smaller level such as `5004` when database storage cannot accommodate the larger stage with headroom. Do not clear unrelated database/container data to make room.
-
-The actual runtime connection is checked for `pricing_runtime`, no superuser/BYPASSRLS, active document/line RLS, and no `INSERT(id)` privilege. Eight ordinary fixture sessions are seeded with hashed random tokens and verified through `/auth/session`; tokens and cookies never enter result artifacts. This avoids changing sign-in limits and prevents session-row refresh locks from serializing the primary concurrent workload. Login/password performance is outside scope. The app uses its existing shared connection pool.
-
-Eight distinct 337-line draft sources are created through the original endpoint. Workloads are serial draft337, serial finalized411, distinct-source bursts of 2/4/8 requests, and an eight-request same-source control. Each concurrent lane uses its own session. The same-source control intentionally includes the endpoint's source-row lock serialization. Distinct-source bursts use equal-sized sources owned by the same tenant.
-
-Even measured rounds run UUIDv4 first and odd rounds UUIDv7 first; workload order rotates. Each variant remains active for the six workloads in a round. Three warmup rounds precede each pass. Trace-disabled requests are the primary timing pass; six separately traced rounds provide insertion, source-lock, auth, pool-entry and projection spans. Every burst awaits all requests through response receipt/JSON parsing before validation. Per-request durations overlap and must not be summed into burst time. Aggregate burst throughput excludes setup, validation, default switches and gaps, so it is not sustained production capacity. DDL plan invalidation and shared client/server processes are additional limits of the controlled experiment.
-
-Every copy is checked against the independent pricing oracle, retrieved through HTTP, checked for UUID version and globally fresh IDs, verified in storage for ownership and absent finalized snapshots, and tested for foreign-owner privacy. Both defaults also receive unauthenticated/foreign/missing/invalid-input isolation checks. Complete source snapshots must remain unchanged. A UUIDv7 copy exercises editing, reordering, finalization, finalized-delete rejection and ordinary draft deletion outside performance timing.
-
-Copies remain live across both passes, so report initial and final counts and inspect first/last-half paired effects and maintenance statistics. The dataset grows; it is not a fixed steady-state workload. After measured passes, separate eight-source diagnostic bursts sample `pg_stat_activity` to check overlapping insert statements. These samples are outside primary measurements; `state=active` includes waiting queries, so examine wait fields and do not equate overlapping statements with simultaneous CPU execution.
-
-Cleanup stops the app before restoration. Under the fixture cleanup lock it verifies owner IDs/email markers and database identity before restoring defaults or permissions. It checks the restored schema before truncating the owned fixture. Replaying a clean ledger refuses a changed schema; unrelated owners are rejected before restoration. The same `--cleanup` command handles ordinary, error and interrupted runs. Validate crash recovery after UUIDv7 activation and repeat recovery to confirm idempotence. The report command rejects runs with errors or unverified restoration.
-
-If measurement finished but cleanup failed, retain the original result unchanged. After successful ledger recovery, the reporter can accept the recovery run's `results.json` as a second argument. It requires the matching original run ID, no recovery errors, restored schema/policies and zero fixture counts, and explicitly records the original cleanup failure. Recovery establishes final state, not unbiased performance: storage-pressure runs require a separate timing caveat or a repeat with adequate headroom.
