@@ -1,0 +1,27 @@
+{
+  "sourceCommit": "114b35700efd35e67267930e2a36f0b5fdb961a9",
+  "variant": "B · Ledger",
+  "desktopViewport": {
+    "width": 1440,
+    "height": 1000
+  },
+  "narrowViewport": {
+    "width": 390,
+    "height": 844
+  },
+  "browserVersion": "156.0.8078.4",
+  "captureMethod": "Playwright Chromium, actual controls, original source; local-only network route",
+  "blockedRequests": [],
+  "pageErrors": [],
+  "snapshots": [
+    "capture-evidence.json",
+    "ledger-dashboard-desktop.png",
+    "ledger-dashboard-rendered.html",
+    "ledger-editor-desktop.png",
+    "ledger-editor-narrow.png",
+    "ledger-editor-rendered.html",
+    "ledger-summary-desktop.png",
+    "ledger-summary-narrow.png",
+    "ledger-summary-rendered.html"
+  ]
+}
